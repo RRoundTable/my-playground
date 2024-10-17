@@ -14,9 +14,23 @@ services:
     image: nocodb/nocodb:latest
     container_name: nocodb
     environment:
-      - NC_DB=pg://nocodb-db:5432?u=${NOCODB_DATABASE_USER}&p=${NOCODB_DATABASE_PW}&d=${NOCODB_DATABASE_NAME}
+      # - NC_DB=pg://nocodb-db:5432?u=${NOCODB_DATABASE_USER}&p=${NOCODB_DATABASE_PW}&d=${NOCODB_DATABASE_NAME}
       - NC_PUBLIC_URL=https://nocodb.${DOMAIN}
       - NC_DISABLE_TELE=true
+      # SQLite 
+      # - LITESTREAM_S3_ENDPOINT=${LITESTREAM_S3_ENDPOINT}
+      - LITESTREAM_S3_REGION=${LITESTREAM_S3_REGION}
+      - LITESTREAM_S3_BUCKET=${LITESTREAM_S3_BUCKET}
+      - LITESTREAM_S3_ACCESS_KEY_ID=${LITESTREAM_S3_ACCESS_KEY_ID}
+      - LITESTREAM_S3_SECRET_ACCESS_KEY=${LITESTREAM_S3_SECRET_ACCESS_KEY}
+      # Object Storage
+      - NC_S3_BUCKET_NAME=${NC_S3_BUCKET_NAME}
+      - NC_S3_REGION=${NC_S3_REGION}
+      # - NC_S3_ENDPOINT=${NC_S3_ENDPOINT}
+      - NC_S3_ACCESS_KEY=${NC_S3_ACCESS_KEY}
+      - NC_S3_ACCESS_SECRET=${NC_S3_ACCESS_SECRET}
+      - NC_ATTACHMENT_FIELD_SIZE=${NC_ATTACHMENT_FIELD_SIZE}
+      
     labels:
       - traefik.enable=true
       - traefik.http.routers.nocodb.entrypoints=websecure
@@ -47,4 +61,5 @@ services:
       - nocodb
     volumes:
       - nocodb_db:/var/lib/postgresql/data
+
     restart: always
