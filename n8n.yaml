@@ -36,6 +36,8 @@ services:
       N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY}
       QUEUE_BULL_REDIS_HOST: n8n-mq
       QUEUE_BULL_REDIS_PORT: 6379
+      # Binary Data
+      N8N_DEFAULT_BINARY_DATA_MODE: filesystem
     networks:
       - ingress
     volumes:
@@ -61,6 +63,7 @@ services:
       EXECUTIONS_MODE: queue
       QUEUE_BULL_REDIS_HOST: n8n-mq
       QUEUE_BULL_REDIS_PORT: 6379
+      N8N_DEFAULT_BINARY_DATA_MODE: filesystem
     networks:
       - ingress
     depends_on:
