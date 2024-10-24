@@ -7,6 +7,7 @@ networks:
 
 volumes:
   n8n_data: {}
+  n8n-mq_data: {}
 services:
   n8n:
     image: docker.n8n.io/n8nio/n8n:1.62.6
@@ -20,6 +21,7 @@ services:
       # N8n deployment
       N8N_HOST: n8n.${DOMAIN}
       N8N_PROTOCOL: https
+      # SMTP
       N8N_SMTP_HOST: ${N8N_SMTP_HOST}
       N8N_SMTP_PORT: ${N8N_SMTP_PORT}
       N8N_SMTP_USER: ${N8N_SMTP_USER:-${EMAIL}}
@@ -27,15 +29,44 @@ services:
       N8N_SMTP_PASS: ${N8N_SMTP_PASS}
       N8N_PROXY_HOPS: 1
       WEBHOOK_URL: https://n8n.${DOMAIN}/
-
       # General
       GENERIC_TIMEZONE: ${TIMEZONE}
       TZ: ${TIMEZONE}
+      # Queue mode
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY}
+      QUEUE_BULL_REDIS_HOST: n8n-mq
+      QUEUE_BULL_REDIS_PORT: 6379
     networks:
       - ingress
     volumes:
       - n8n_data:/home/node/.n8n
-    restart: always
+    restart: unless-stopped
+  
+  n8n-mq:
+    image: redis:7.4.1
+    container_name: n8n-mq
+    volumes:
+      - n8n-mq_data:/data
+    networks:
+      - ingress
+    restart: unless-stopped
+
+  n8n-workers:
+    image: docker.n8n.io/n8nio/n8n:1.62.6
+    command: ["worker"]
+    deploy:
+      replicas: 2
+    environment:
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY}
+      EXECUTIONS_MODE: queue
+      QUEUE_BULL_REDIS_HOST: n8n-mq
+      QUEUE_BULL_REDIS_PORT: 6379
+    networks:
+      - ingress
+    depends_on:
+      - n8n-mq
+      - n8n
+    restart: unless-stopped
 
   litestream:
     image: litestream/litestream
