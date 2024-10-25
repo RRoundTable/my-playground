@@ -29,7 +29,14 @@ services:
       - NC_S3_ACCESS_KEY=${NC_S3_ACCESS_KEY}
       - NC_S3_ACCESS_SECRET=${NC_S3_ACCESS_SECRET}
       - NC_ATTACHMENT_FIELD_SIZE=${NC_ATTACHMENT_FIELD_SIZE}
-      
+      # SMTP
+      - NC_SMTP_FROM=${EMAIL}
+      - NC_SMTP_HOST=${NC_SMTP_HOST}
+      - NC_SMTP_PORT=${NC_SMTP_PORT}
+      - NC_SMTP_USERNAME=${NC_SMTP_USERNAME}
+      - NC_SMTP_PASSWORD=${NC_SMTP_PASSWORD}
+      - NC_SMTP_SECURE=true
+
     labels:
       - traefik.enable=true
       - traefik.http.routers.nocodb.entrypoints=websecure
