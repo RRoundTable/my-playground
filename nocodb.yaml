@@ -38,6 +38,7 @@ services:
       - NC_SMTP_SECURE=true
 
     labels:
+      - traefik.http.nocodb.filebrowser.middlewares=authentik-proxy@docker
       - traefik.enable=true
       - traefik.http.routers.nocodb.entrypoints=websecure
       - traefik.http.routers.nocodb.rule=Host(`nocodb.${DOMAIN}`)

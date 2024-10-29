@@ -9,6 +9,7 @@ services:
     container_name: postiz
     restart: always
     labels:
+      - traefik.http.routers.postiz.middlewares=authentik-proxy@docker
       - "traefik.http.routers.postiz-backend.rule=Host(`postiz.${DOMAIN}`)"  # Replace with your domain
       - "traefik.http.services.postiz-backend.loadbalancer.server.port=5000"  # Internal port for backend
       - "traefik.http.routers.postiz-backend.entrypoints=websecure"  # Define entrypoint (default http)

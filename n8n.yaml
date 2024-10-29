@@ -13,6 +13,7 @@ services:
     image: docker.n8n.io/n8nio/n8n:1.62.6
     container_name: n8n
     labels:
+      - traefik.http.routers.n8n.middlewares=authentik-proxy@docker
       - traefik.enable=true
       - traefik.http.routers.n8n.entrypoints=websecure
       - traefik.http.routers.n8n.rule=Host(`n8n.${DOMAIN}`)

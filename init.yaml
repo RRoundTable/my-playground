@@ -10,6 +10,7 @@ volumes:
 services:
   portainer:
     labels:
+      - traefik.http.routers.portainer.middlewares=authentik-proxy@docker
       - traefik.enable=true
       - traefik.http.routers.portainer.entrypoints=websecure
       - traefik.http.routers.portainer.rule=Host(`portainer.${DOMAIN}`)
