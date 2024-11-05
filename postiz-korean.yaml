@@ -1,0 +1,98 @@
+networks:
+  ingress:
+    name: ingress
+    external: true
+
+services:
+  postiz:
+    image: ghcr.io/gitroomhq/postiz-app:latest
+    container_name: postiz-korean
+    restart: always
+    labels:
+      - "traefik.http.routers.postiz-korean-backend.middlewares=authentik-proxy@docker"
+      - "traefik.http.routers.postiz-korean-backend.rule=Host(`postiz-korean.${DOMAIN}`)"  # Replace with your domain
+      - "traefik.http.services.postiz-korean-backend.loadbalancer.server.port=5000"  # Internal port for backend
+      - "traefik.http.routers.postiz-korean-backend.entrypoints=websecure"  # Define entrypoint (default http)
+      - "traefik.http.routers.postiz-korean-backend.tls=true"  # Disable TLS for HTTP (you can enable it if needed)
+    environment:
+      # You must change these. Replace `postiz.your-server.com` with your DNS name - what your web browser sees.
+      MAIN_URL: "https://postiz-korean.${DOMAIN}"
+      FRONTEND_URL: "https://postiz-korean.${DOMAIN}"
+      NEXT_PUBLIC_BACKEND_URL: "https://postiz-korean.${DOMAIN}/api"
+      JWT_SECRET: ${POSTIZ_KOREAN_JWT_SECRET}
+ 
+      # These defaults are probably fine, but if you change your user/password, update it in the
+      # postiz-korean-postgres or postiz-korean-redis services below.
+      DATABASE_URL: "postgresql://postiz-user:postiz-password@postiz-korean-postgres:5432/postiz-db-local"
+      REDIS_URL: "redis://postiz-korean-redis:6379"
+      BACKEND_INTERNAL_URL: "http://localhost:3000"
+      IS_GENERAL: "true" # Required for self-hosting.
+      # The container images are pre-configured to use /uploads for file storage.
+      # You probably should not change this unless you have a really good reason!
+      STORAGE_PROVIDER: "local"
+      UPLOAD_DIRECTORY: "/uploads"
+      NEXT_PUBLIC_UPLOAD_DIRECTORY: "/uploads"
+      # SNS
+      FACEBOOK_APP_ID: ${POSTIZ_KOREAN_FACEBOOK_APP_ID}
+      FACEBOOK_APP_SECRET: ${POSTIZ_KOREAN_FACEBOOK_APP_SECRET}
+      TIKTOK_CLIENT_ID: ${POSTIZ_KOREAN_TIKTOK_CLIENT_ID}
+      TIKTOK_CLIENT_SECRET: ${POSTIZ_KOREAN_TIKTOK_CLIENT_SECRET}
+      YOUTUBE_CLIENT_ID: ${POSTIZ_KOREAN_YOUTUBE_CLIENT_ID}
+      YOUTUBE_CLIENT_SECRET: ${POSTIZ_KOREAN_YOUTUBE_CLIENT_SECRET}
+    volumes:
+      - postiz-korean-config:/config/
+      - postiz-korean-uploads:/uploads/
+    networks:
+      - ingress
+    depends_on:
+      postiz-korean-postgres:
+        condition: service_healthy
+      postiz-korean-redis:
+        condition: service_healthy
+ 
+  postiz-korean-postgres:
+    image: postgres:14.5
+    container_name: postiz-korean-postgres
+    restart: always
+    environment:
+      POSTGRES_PASSWORD: postiz-password
+      POSTGRES_USER: postiz-user
+      POSTGRES_DB: postiz-db-local
+    volumes:
+      - postgres-volume:/var/lib/postgresql/data
+    networks:
+      - ingress
+    healthcheck:
+      test: pg_isready -U postiz-user -d postiz-db-local
+      interval: 10s
+      timeout: 3s
+      retries: 3
+  postiz-korean-redis:
+    image: redis:7.2
+    container_name: postiz-korean-redis
+    restart: always
+
+    healthcheck:
+      test: redis-cli ping
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    volumes:
+      - postiz-korean-redis-data:/data
+    networks:
+      - ingress
+ 
+ 
+volumes:
+  postgres-volume:
+    external: false
+ 
+  postiz-korean-redis-data:
+    external: false
+ 
+  postiz-korean-config:
+    external: false
+ 
+  postiz-korean-uploads:
+    external: false
+
