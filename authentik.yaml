@@ -60,7 +60,6 @@ services:
       - "${COMPOSE_PORT_HTTP:-9080}:9000"
       - "${COMPOSE_PORT_HTTPS:-9443}:9443"
     environment:
-      AUTHENTIK_LOG_LEVEL: trace
       AUTHENTIK_REDIS__HOST: authentik-mq
       AUTHENTIK_REDIS__DB: 1
       AUTHENTIK_POSTGRESQL__HOST: authentik-db
