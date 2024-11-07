@@ -1,0 +1,73 @@
+volumes:
+  calcom-database-data:
+
+networks:
+  ingress:
+    name: ingress
+    external: true
+
+services:
+  calcom-database:
+    container_name: calcom-database
+    image: postgres
+    restart: always
+    volumes:
+      - calcom-database-data:/var/lib/postgresql/data/
+    environment:
+      POSTGRES_USER: ${CALCOM_POSTGRES_USER}
+      POSTGRES_DB: ${CALCOM_POSTGRES_DB}
+      POSTGRES_PASSWORD: ${CALCOM_POSTGRES_PASSWORD}
+      DATABASE_URL: ${CALCOM_DATABASE_URL}
+    networks:
+      - ingress
+
+  calcom:
+    image: calcom.docker.scarf.sh/calcom/cal.com
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.calcom.entrypoints=websecure
+      - traefik.http.routers.calcom.rule=Host(`calcom.${DOMAIN}`)
+      - traefik.http.services.calcom.loadbalancer.server.port=3000
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_WEBAPP_URL: https://calcom.${DOMAIN}
+        NEXT_PUBLIC_API_V2_URL: https://calcom.${DOMAIN}:5555/api/v2
+        CALCOM_TELEMETRY_DISABLED: 1
+        NEXTAUTH_SECRET: ${CALCOM_NEXTAUTH_SECRET}
+        CALENDSO_ENCRYPTION_KEY: ${CALCOM_CALENDSO_ENCRYPTION_KEY}
+        DATABASE_URL: ${CALCOM_DATABASE_URL}
+        DATABASE_DIRECT_URL: ${CALCOM_DATABASE_URL}
+      network: stack
+    restart: always
+    networks:
+      - ingress
+    # ports:
+    #   - 3000:3000
+    environment:
+      DATABASE_URL: ${CALCOM_DATABASE_URL}
+      DATABASE_DIRECT_URL: ${CALCOM_DATABASE_URL}
+      NEXTAUTH_SECRET: ${CALCOM_NEXTAUTH_SECRET}
+      CALENDSO_ENCRYPTION_KEY: ${CALCOM_CALENDSO_ENCRYPTION_KEY}
+    depends_on:
+      - calcom-database
+
+# Optional use of Prisma Studio. In production, comment out or remove the section below to prevent unwanted access to your calcom-database.
+  # studio:
+  #   image: calcom.docker.scarf.sh/calcom/cal.com
+  #   restart: always
+  #   networks:
+  #     - stack
+  #   ports:
+  #     - 5555:5555
+  #   env_file: .env
+  #   environment:
+  #     - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${DATABASE_HOST}/${POSTGRES_DB}
+  #     - DATABASE_DIRECT_URL=${DATABASE_URL}
+  #   depends_on:
+  #     - calcom-database
+  #   command:
+  #     - npx
+  #     - prisma
+  #     - studio
