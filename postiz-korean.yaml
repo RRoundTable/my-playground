@@ -39,6 +39,11 @@ services:
       TIKTOK_CLIENT_SECRET: ${POSTIZ_KOREAN_TIKTOK_CLIENT_SECRET}
       YOUTUBE_CLIENT_ID: ${POSTIZ_KOREAN_YOUTUBE_CLIENT_ID}
       YOUTUBE_CLIENT_SECRET: ${POSTIZ_KOREAN_YOUTUBE_CLIENT_SECRET}
+      # Email Notification
+      EMAIL_PROVIDER: "resend"
+      RESEND_API_KEY: ${POSTIZ_KOREAN_RESEND_API_KEY}
+      EMAIL_FROM_NAME: "Postiz Emailer"
+      EMAIL_FROM_ADDRESS: "postiz@nocoders.ai"
     volumes:
       - postiz-korean-config:/config/
       - postiz-korean-uploads:/uploads/

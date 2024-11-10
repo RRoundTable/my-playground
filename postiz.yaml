@@ -39,6 +39,11 @@ services:
       TIKTOK_CLIENT_SECRET: ${POSTIZ_TIKTOK_CLIENT_SECRET}
       YOUTUBE_CLIENT_ID: ${POSTIZ_YOUTUBE_CLIENT_ID}
       YOUTUBE_CLIENT_SECRET: ${POSTIZ_YOUTUBE_CLIENT_SECRET}
+      # Email Notification
+      EMAIL_PROVIDER: "resend"
+      RESEND_API_KEY: ${POSTIZ_RESEND_API_KEY}
+      EMAIL_FROM_NAME: "Postiz Emailer"
+      EMAIL_FROM_ADDRESS: "postiz@nocoders.ai"
     volumes:
       - postiz-config:/config/
       - postiz-uploads:/uploads/
