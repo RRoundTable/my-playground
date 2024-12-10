@@ -18,7 +18,7 @@ services:
       - traefik.http.routers.n8n.entrypoints=websecure
       - traefik.http.routers.n8n.rule=Host(`n8n.${DOMAIN}`)
       - traefik.http.services.n8n.loadbalancer.server.port=5678
-      - "traefik.http.routers.n8n.rule=Host(`n8n.${DOMAIN}`) && (PathPrefix(`/webhook-test`) || PathPrefix(`/webhook`))"
+      - traefik.http.routers.n8n-webhook.rule=Host(`n8n.${DOMAIN}`) && (PathPrefix(`/webhook-test`) || PathPrefix(`/webhook`))
 
     environment:
       # N8n deployment
