@@ -9,11 +9,12 @@ services:
     container_name: postiz-korean
     restart: always
     labels:
-      - "traefik.http.routers.postiz-korean-backend.middlewares=authentik-proxy@docker"
+      - "traefik.http.routers.postiz-korean-backend.middlewares=authentik-proxy@docker" # channel refresh 문제시 살펴보기
       - "traefik.http.routers.postiz-korean-backend.rule=Host(`postiz-korean.${DOMAIN}`)"  # Replace with your domain
       - "traefik.http.services.postiz-korean-backend.loadbalancer.server.port=5000"  # Internal port for backend
       - "traefik.http.routers.postiz-korean-backend.entrypoints=websecure"  # Define entrypoint (default http)
       - "traefik.http.routers.postiz-korean-backend.tls=true"  # Disable TLS for HTTP (you can enable it if needed)
+      - traefik.http.routers.postiz-korean-webhook.rule=Host(`postiz-korean.${DOMAIN}`) && PathPrefix(`/integrations/social/`)
     environment:
       # You must change these. Replace `postiz.your-server.com` with your DNS name - what your web browser sees.
       MAIN_URL: "https://postiz-korean.${DOMAIN}"
