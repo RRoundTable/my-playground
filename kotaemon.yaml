@@ -1,0 +1,33 @@
+version: '3.8'
+
+networks:
+  ingress:
+    name: ingress
+    external: true
+
+volumes:
+  kotaemon_data: {}
+
+services:
+  kotaemon:
+    image: ghcr.io/cinnamon/kotaemon:main-full
+    container_name: kotaemon
+    environment:
+      - GRADIO_SERVER_NAME=0.0.0.0
+      - GRADIO_SERVER_PORT=7860
+    ports:
+      - "7860:7860"
+    volumes:
+      - kotaemon_data:/app/ktem_app_data
+    platform: linux/amd64
+    stdin_open: true
+    tty: true
+    restart: unless-stopped
+    labels:
+      - traefik.http.routers.kotaemon.middlewares=authentik-proxy@docker
+      - traefik.enable=true
+      - traefik.http.routers.kotaemon.entrypoints=websecure
+      - traefik.http.routers.kotaemon.rule=Host(`kotaemon.${DOMAIN}`)
+      - traefik.http.services.kotaemon.loadbalancer.server.port=7860
+    networks:
+      - ingress
