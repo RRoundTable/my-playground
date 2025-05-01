@@ -1,5 +1,5 @@
-from typing import Annotated, TypedDict
-from langchain_core.messages import HumanMessage, AIMessage
+from typing import Annotated, TypedDict, List, Union
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_openai import ChatOpenAI
 from langgraph.graph import StateGraph, END, START
@@ -14,6 +14,7 @@ class AgentState(TypedDict):
     title: str
     content: str
     evaluation: str
+    messages: List[Union[HumanMessage, AIMessage, SystemMessage]]
 
 # Initialize the LLM
 llm = ChatOpenAI(
@@ -55,6 +56,22 @@ evaluation_prompt = ChatPromptTemplate.from_messages([
     """)
 ])
 
+# Define the chat prompt
+chat_prompt = ChatPromptTemplate.from_messages([
+    ("system", """You are a helpful assistant specialized in Korean language learning and YouTube content creation.
+    You can help users evaluate their video titles and provide suggestions for improvement.
+    You can also engage in general conversation about Korean language learning and content creation.
+    Please respond in Korean.
+
+    대화를 진행하면서 제목짓는 것을 도와줘 
+    
+    """),
+
+    ("human", """
+    {messages}
+    """)
+])
+
 # Define the evaluation node
 def evaluate_title(state: AgentState) -> AgentState:
     # Generate evaluation
@@ -68,11 +85,25 @@ def evaluate_title(state: AgentState) -> AgentState:
     state["evaluation"] = response.content
     return state
 
+# Define the chat node
+def chat(state: AgentState) -> AgentState:
+    # Generate response
+    chain = chat_prompt | llm
+    print("state", state["messages"])
+    response = chain.invoke({
+        "messages": state["messages"]
+    })
+    
+    # Add AI response to messages
+    state["messages"].append(AIMessage(content=response.content))
+    return state
+
 # Create the workflow
 workflow = StateGraph(AgentState)
 
 # Add nodes
 workflow.add_node("evaluate", evaluate_title)
+workflow.add_node("chat", chat)
 
 # Add edges
 workflow.add_edge(START, "evaluate")
@@ -95,39 +126,69 @@ def evaluate_title_agent(title: str, content: str) -> str:
     result = app.invoke({
         "title": title,
         "content": content,
-        "evaluation": ""
+        "evaluation": "",
+        "messages": []
     })
     return result["evaluation"]
 
+def chat_with_agent(message: str, history: List[Union[HumanMessage, AIMessage, SystemMessage]] = None) -> str:
+    """
+    Chat with the title agent.
+    
+    Args:
+        message (str): The user's message
+        history (List[Union[HumanMessage, AIMessage, SystemMessage]], optional): Chat history
+        
+    Returns:
+        str: The agent's response
+    """
+    if history is None:
+        history = []
+    
+    history.append(HumanMessage(content=message))
+    # Create state with existing history
+    state = {
+        "title": "",
+        "content": "",
+        "evaluation": "",
+        "messages": history.copy()  # Create a copy to avoid modifying the original
+    }
+    
+    # Run chat
+    result = chat(state)
+    return result["messages"][-1].content
+
 # Test section
 if __name__ == "__main__":
-    # Test case 1
-    test_title = "한국어 학습의 효과적인 방법"
-    test_content = """
-    한국어를 배우는 외국인들을 위한 효과적인 학습 방법을 소개합니다.
-    듣기, 말하기, 읽기, 쓰기의 균형 잡힌 학습이 중요하며,
-    실제 한국인과의 대화 기회를 많이 가지는 것이 도움이 됩니다.
-    또한 K-pop과 한국 드라마를 통한 문화 학습도 언어 습득에 큰 도움이 됩니다.
-    체계적인 문법 학습과 함께 실생활에서 사용되는 표현을 익히는 것이 핵심입니다.
-    """
+    # Test evaluation
+    # test_title = "한국어 학습의 효과적인 방법"
+    # test_content = """
+    # 한국어를 배우는 외국인들을 위한 효과적인 학습 방법을 소개합니다.
+    # 듣기, 말하기, 읽기, 쓰기의 균형 잡힌 학습이 중요하며,
+    # 실제 한국인과의 대화 기회를 많이 가지는 것이 도움이 됩니다.
+    # 또한 K-pop과 한국 드라마를 통한 문화 학습도 언어 습득에 큰 도움이 됩니다.
+    # 체계적인 문법 학습과 함께 실생활에서 사용되는 표현을 익히는 것이 핵심입니다.
+    # """
     
-    print("Test Case 1:")
-    print("Title:", test_title)
-    print("\nContent:", test_content)
-    print("\nEvaluation:")
-    print(evaluate_title_agent(test_title, test_content))
+    # print("Test Case 1 - Evaluation:")
+    # print("Title:", test_title)
+    # print("\nContent:", test_content)
+    # print("\nEvaluation:")
+    # print(evaluate_title_agent(test_title, test_content))
     
-    # Test case 2
-    test_title2 = "서울에서의 하루"
-    test_content2 = """
-    한국어를 배우는 학생들을 위한 실제 한국 생활 경험담입니다.
-    지하철 이용부터 식당에서 주문하기, 길 묻기까지
-    기초적인 한국어로 일상생활을 해결하는 방법을 설명합니다.
-    문화 충격을 극복하고 한국 생활에 적응하는 과정도 함께 다룹니다.
-    """
+    # Test chat
+    print("\nInteractive Chat Session:")
+    print("Type 'quit' to exit")
     
-    print("\nTest Case 2:")
-    print("Title:", test_title2)
-    print("\nContent:", test_content2)
-    print("\nEvaluation:")
-    print(evaluate_title_agent(test_title2, test_content2)) 
+    history = []
+    while True:
+        user_input = input("\nYou: ")
+        if user_input.lower() == 'quit':
+            break
+            
+        response = chat_with_agent(user_input, history)
+        print("Agent:", response)
+        
+        # Update history with both user input and agent response
+        history.append(HumanMessage(content=user_input))
+        history.append(AIMessage(content=response))
