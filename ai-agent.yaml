@@ -21,16 +21,14 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - ENVIRONMENT=production
-    volumes:
-      - ./src:/app
-      - ai-agent-data:/data
+    # volumes:
+    #   - ./src/korean-teacher-agent/:/app
+    #   - ai-agent-data:/data
     working_dir: /app
-    command: poetry run uvicorn main:app --host 0.0.0.0 --port 8000
+    command: poetry run uvicorn src.main:app --host 0.0.0.0 --port 8000
     networks:
       - ingress
-    depends_on:
-      - postgres
-      - redis
+
 
 volumes:
   ai-agent-data:

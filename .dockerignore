@@ -1,3 +1,9 @@
 # flyctl launch added from .gitignore
 **/.DS_Store
 fly.toml
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
