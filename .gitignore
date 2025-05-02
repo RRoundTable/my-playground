@@ -2,3 +2,5 @@
 .env
 certs
 users.yml
+__pycache__
+.venv
