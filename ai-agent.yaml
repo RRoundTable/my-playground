@@ -1,0 +1,37 @@
+version: '3.8'
+
+networks:
+  ingress:
+    name: ingress
+    external: true
+
+services:
+  ai-agent:
+    image: ghcr.io/nocoders/korean-teacher-agent:latest
+    build:
+      context: ./src/korean-teacher-agent
+      dockerfile: Dockerfile
+    container_name: ai-agent
+    restart: always
+    labels:
+      - "traefik.http.routers.ai-agent.rule=Host(`ai-agent.${DOMAIN}`)"
+      - "traefik.http.services.ai-agent.loadbalancer.server.port=8000"
+      - "traefik.http.routers.ai-agent.entrypoints=websecure"
+      - "traefik.http.routers.ai-agent.tls=true"
+    environment:
+      - PYTHONUNBUFFERED=1
+      - ENVIRONMENT=production
+    volumes:
+      - ./src:/app
+      - ai-agent-data:/data
+    working_dir: /app
+    command: poetry run uvicorn main:app --host 0.0.0.0 --port 8000
+    networks:
+      - ingress
+    depends_on:
+      - postgres
+      - redis
+
+volumes:
+  ai-agent-data:
+    external: false

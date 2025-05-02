@@ -10,6 +10,9 @@ down:
 	COMPOSE_PROJECT_NAME=init docker compose -f init.yaml rm
 	docker network rm ingress
 
+service-build:
+	COMPOSE_PROJECT_NAME=$(STACK_NAME) docker compose -f $(STACK_NAME).yaml --env-file .env up -d --remove-orphans
+
 service-up:
 	COMPOSE_PROJECT_NAME=$(STACK_NAME) docker compose -f $(STACK_NAME).yaml --env-file .env up -d --remove-orphans
 
