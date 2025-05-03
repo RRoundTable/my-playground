@@ -4,17 +4,19 @@ from langchain_openai import ChatOpenAI
 from langgraph.graph import StateGraph, END, START
 import os
 from dotenv import load_dotenv
-from src.prompts import create_title_evaluation_prompt, create_title_chat_prompt
+from src.prompts import create_title_evaluation_prompt
 
 # Load environment variables
 load_dotenv()
 
 # Define the state type
 class AgentState(TypedDict):
-    title: str
-    content: str
-    evaluation: str
-    messages: List[Union[HumanMessage, AIMessage, SystemMessage]]
+    """State for the title agent workflow."""
+    title: str = "" # The title to evaluate
+    content: str = ""  # The content to compare the title against
+    evaluation: str = ""  # The evaluation result
+    chat_history: List[Union[HumanMessage, AIMessage]] = []  # Chat history for context
+    agent_scratchpad: List[Union[HumanMessage, AIMessage]] = []  # For agent's intermediate reasoning
 
 # Initialize the LLM
 llm = ChatOpenAI(
@@ -22,129 +24,93 @@ llm = ChatOpenAI(
     temperature=0.7
 )
 
-# Define the evaluation prompt
-evaluation_prompt = create_title_evaluation_prompt()
-
-# Define the chat prompt
-chat_prompt = create_title_chat_prompt()
-
-# Define the evaluation node
-def evaluate_title(state: AgentState) -> AgentState:
-    # Generate evaluation
-    chain = evaluation_prompt | llm
-    response = chain.invoke({
-        "title": state["title"],
-        "content": state["content"]
-    })
+def create_title_agent():
+    """
+    Create and return a title evaluation agent.
     
-    # Update state with evaluation
+    Returns:
+        StateGraph: The compiled title evaluation agent
+    """
+    # Define the workflow
+    workflow = StateGraph(AgentState)
+    
+    # Add nodes
+    workflow.add_node("evaluate", evaluate_title)
+    workflow.add_node("generate_response", generate_response)
+    
+    # Add edges
+    workflow.add_edge("evaluate", "generate_response")
+    workflow.add_edge("generate_response", END)
+    
+    # Set entry point
+    workflow.set_entry_point("evaluate")
+    
+    # Compile the workflow
+    return workflow.compile(name="title_agent")
+
+def evaluate_title(state: AgentState) -> AgentState:
+    """
+    Evaluate the title based on the content.
+    
+    Args:
+        state (AgentState): The current state
+        
+    Returns:
+        AgentState: Updated state with evaluation
+    """
+    prompt = create_title_evaluation_prompt()
+    formatted_prompt = prompt.format_prompt(
+        title=state["title"],
+        content=state["content"],
+        chat_history=state["chat_history"],
+        agent_scratchpad=state["agent_scratchpad"]
+    )
+    response = llm.invoke(formatted_prompt.to_messages())
     state["evaluation"] = response.content
     return state
 
-# Define the chat node
-def chat(state: AgentState) -> AgentState:
-    # Generate response
-    chain = chat_prompt | llm
-    print("state", state["messages"])
-    response = chain.invoke({
-        "messages": state["messages"]
-    })
+def generate_response(state: AgentState) -> AgentState:
+    """
+    Generate a response based on the evaluation.
     
-    # Add AI response to messages
-    state["messages"].append(AIMessage(content=response.content))
+    Args:
+        state (AgentState): The current state
+        
+    Returns:
+        AgentState: Updated state with response
+    """
     return state
 
-# Create the workflow
-workflow = StateGraph(AgentState)
+# Create the agent
+title_agent = create_title_agent()
 
-# Add nodes
-workflow.add_node("evaluate", evaluate_title)
-workflow.add_node("chat", chat)
-
-# Add edges
-workflow.add_edge(START, "evaluate")
-workflow.add_edge("evaluate", END)
-
-# Compile the graph
-app = workflow.compile()
-
-def evaluate_title_agent(title: str, content: str) -> str:
-    """
-    Evaluate a title based on its content using the agent.
-    
-    Args:
-        title (str): The title to evaluate
-        content (str): The content to compare against
-        
-    Returns:
-        str: The evaluation result
-    """
-    result = app.invoke({
-        "title": title,
-        "content": content,
-        "evaluation": "",
-        "messages": []
-    })
-    return result["evaluation"]
-
-def chat_with_agent(message: str, history: List[Union[HumanMessage, AIMessage, SystemMessage]] = None) -> str:
-    """
-    Chat with the title agent.
-    
-    Args:
-        message (str): The user's message
-        history (List[Union[HumanMessage, AIMessage, SystemMessage]], optional): Chat history
-        
-    Returns:
-        str: The agent's response
-    """
-    if history is None:
-        history = []
-    
-    history.append(HumanMessage(content=message))
-    # Create state with existing history
-    state = {
-        "title": "",
-        "content": "",
-        "evaluation": "",
-        "messages": history.copy()  # Create a copy to avoid modifying the original
-    }
-    
-    # Run chat
-    result = chat(state)
-    return result["messages"][-1].content
-
-# Test section
+# Test section  
 if __name__ == "__main__":
-    # Test evaluation
-    # test_title = "한국어 학습의 효과적인 방법"
-    # test_content = """
-    # 한국어를 배우는 외국인들을 위한 효과적인 학습 방법을 소개합니다.
-    # 듣기, 말하기, 읽기, 쓰기의 균형 잡힌 학습이 중요하며,
-    # 실제 한국인과의 대화 기회를 많이 가지는 것이 도움이 됩니다.
-    # 또한 K-pop과 한국 드라마를 통한 문화 학습도 언어 습득에 큰 도움이 됩니다.
-    # 체계적인 문법 학습과 함께 실생활에서 사용되는 표현을 익히는 것이 핵심입니다.
-    # """
+    # Test title agent
+    test_title = "한국어 학습의 효과적인 방법"
+    test_content = """
+    한국어를 배우는 외국인들을 위한 효과적인 학습 방법을 소개합니다.
+    듣기, 말하기, 읽기, 쓰기의 균형 잡힌 학습이 중요하며,
+    실제 한국인과의 대화 기회를 많이 가지는 것이 도움이 됩니다.
+    또한 K-pop과 한국 드라마를 통한 문화 학습도 언어 습득에 큰 도움이 됩니다.
+    체계적인 문법 학습과 함께 실생활에서 사용되는 표현을 익히는 것이 핵심입니다.
+    """
     
-    # print("Test Case 1 - Evaluation:")
-    # print("Title:", test_title)
-    # print("\nContent:", test_content)
-    # print("\nEvaluation:")
-    # print(evaluate_title_agent(test_title, test_content))
+    print("Title Agent Test:")
+    print("Title:", test_title)
+    print("\nContent:", test_content)
     
-    # Test chat
-    print("\nInteractive Chat Session:")
-    print("Type 'quit' to exit")
+    # Create input state
+    input_state = AgentState(
+        title=test_title,
+        content=test_content,
+        evaluation="",
+        chat_history=[],
+        agent_scratchpad=[]
+    )
     
-    history = []
-    while True:
-        user_input = input("\nYou: ")
-        if user_input.lower() == 'quit':
-            break
-            
-        response = chat_with_agent(user_input, history)
-        print("Agent:", response)
-        
-        # Update history with both user input and agent response
-        history.append(HumanMessage(content=user_input))
-        history.append(AIMessage(content=response))
+    # Run the title agent
+    result = title_agent.invoke(input_state)
+    
+    print("\nEvaluation Result:")
+    print(result["evaluation"])
