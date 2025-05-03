@@ -16,6 +16,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.tools import tool
 import requests
 from src.prompts import create_notion_agent_prompt
+from langgraph.prebuilt import create_react_agent
 
 load_dotenv()
 
@@ -278,10 +279,10 @@ def create_notion_agent():
     ]
     
     prompt = create_notion_agent_prompt()
-    agent = create_openai_functions_agent(llm, tools, prompt)
-    return AgentExecutor.from_agent_and_tools(agent=agent, tools=tools, verbose=True)
 
-def run_notion_agent(query: str, chat_history: Optional[List] = None) -> str:
+    return create_react_agent(model=llm, tools=tools, prompt=prompt, name="notion_agent")
+
+def run_notion_agent(query: str, chat_history: Optional[List] = None, agent_scratchpad: Optional[List] = None) -> str:
     """Run the Notion agent with the given query and chat history.
     
     Args:
@@ -297,14 +298,37 @@ def run_notion_agent(query: str, chat_history: Optional[List] = None) -> str:
     agent = create_notion_agent()
     result = agent.invoke({
         "input": query,
-        "chat_history": chat_history
+        "chat_history": chat_history,
+        "agent_scratchpad": agent_scratchpad
     })
     
     return result["output"]
+# Create the Notion agent instance
+notion_agent = create_notion_agent()
+
 
 # Example usage
 if __name__ == "__main__":
-    # Example query
-    query = "Get page comments from the page with id 1e7ff0df284780d0973bf7d70305a2f4"
-    response = run_notion_agent(query)
-    print(response)
+    # Notion Agent 테스트 스크립트
+    print("Notion Agent 테스트 시작")
+    print("=" * 50)
+    
+    # 다양한 테스트 쿼리 준비
+    test_queries = [
+        "Get the title of page with id 1e7ff0df284780d0973bf7d70305a2f4",
+        "Get all blocks from the page with id 1e7ff0df284780d0973bf7d70305a2f4",
+    ]
+    
+    # 각 쿼리 실행 및 결과 출력
+    for i, query in enumerate(test_queries, 1):
+        print(f"\n테스트 #{i}: {query}")
+        print("-" * 50)
+        try:
+            response = run_notion_agent(query)
+            print(f"응답: {response}")
+        except Exception as e:
+            print(f"오류 발생: {str(e)}")
+        print("-" * 50)
+    
+    print("\nNotion Agent 테스트 완료")
+    print("=" * 50)

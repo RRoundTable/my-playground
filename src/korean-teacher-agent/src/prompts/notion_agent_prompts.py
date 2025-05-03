@@ -1,18 +1,17 @@
 """
 Prompts for the Notion agent.
 """
-from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain.prompts import ChatPromptTemplate
 
-NOTION_AGENT_PROMPT = """You are a helpful assistant that can interact with Notion.
-You have access to tools that can fetch page information, blocks, and comments from Notion,
-and can also insert new comments into blocks.
-Use these tools to help users with their Notion-related tasks."""
+
+NOTION_AGENT_PROMPT = (
+    "You are a Notion interaction agent.\n\n"
+    "INSTRUCTIONS:\n"
+    "- Assist ONLY with Notion-related tasks, such as fetching page information, blocks, and comments\n"
+    "- You can also insert new comments into blocks\n"
+    "- After you're done with your tasks, respond to the supervisor directly\n"
+    "- Respond ONLY with the results of your work, do NOT include ANY other text."
+)
 
 def create_notion_agent_prompt() -> ChatPromptTemplate:
-    """Create and return the ChatPromptTemplate for the Notion agent."""
-    return ChatPromptTemplate.from_messages([
-        ("system", NOTION_AGENT_PROMPT),
-        MessagesPlaceholder(variable_name="chat_history"),
-        ("human", "{input}"),
-        MessagesPlaceholder(variable_name="agent_scratchpad"),
-    ]) 
+    return NOTION_AGENT_PROMPT
