@@ -141,26 +141,26 @@ def get_base_url():
     return "https://api.notion.com/v1"
 
 @tool("get_notion_page")
-def get_page_tool(tool_input: str) -> Dict:
+def get_page_tool(page_id: str) -> Dict:
     """Fetch a Notion page by its ID.
     
     Args:
-        tool_input (str): The ID of the Notion page to fetch
+        page_id (str): The ID of the Notion page to fetch
         
     Returns:
         Dict: The page data from Notion API
     """
     try:
-        return notion_client.get_page(tool_input)
+        return notion_client.get_page(page_id)
     except NotionAPIError as e:
-        raise Exception(f"Failed to fetch page {tool_input}: {str(e)}")
+        raise Exception(f"Failed to fetch page {page_id}: {str(e)}")
 
 @tool("get_notion_page_blocks")
-def get_page_blocks_tool(tool_input: str) -> List[Dict]:
+def get_page_blocks_tool(page_id: str) -> List[Dict]:
     """Fetch all blocks from a Notion page.
     
     Args:
-        tool_input (str): The ID of the Notion page to fetch blocks from
+        page_id (str): The ID of the Notion page to fetch blocks from
         
     Returns:
         List[Dict]: List of blocks from the Notion page
@@ -168,14 +168,14 @@ def get_page_blocks_tool(tool_input: str) -> List[Dict]:
     try:
         return notion_client.get_page_blocks(tool_input)
     except NotionAPIError as e:
-        raise Exception(f"Failed to fetch blocks for page {tool_input}: {str(e)}")
+        raise Exception(f"Failed to fetch blocks for page {page_id}: {str(e)}")
 
 @tool("get_notion_page_comments")
-def get_page_comments_tool(tool_input: str) -> List[Dict]:
+def get_page_comments_tool(page_id: str) -> List[Dict]:
     """Fetch all comments from a Notion page.
     
     Args:
-        tool_input (str): The ID of the Notion page to fetch comments from
+        page_id (str): The ID of the Notion page to fetch comments from
         
     Returns:
         List[Dict]: List of comments from the Notion page
@@ -183,14 +183,14 @@ def get_page_comments_tool(tool_input: str) -> List[Dict]:
     try:
         return notion_client.get_comments(block_id=tool_input)
     except NotionAPIError as e:
-        raise Exception(f"Failed to fetch comments for page {tool_input}: {str(e)}")
+        raise Exception(f"Failed to fetch comments for page {page_id}: {str(e)}")
 
 @tool("get_notion_block_comments")
-def get_block_comments_tool(tool_input: str) -> List[Dict]:
+def get_block_comments_tool(block_id: str) -> List[Dict]:
     """Fetch all comments from a specific Notion block.
     
     Args:
-        tool_input (str): The ID of the Notion block to fetch comments from
+        block_id (str): The ID of the Notion block to fetch comments from
         
     Returns:
         List[Dict]: List of comments from the Notion block
@@ -198,7 +198,7 @@ def get_block_comments_tool(tool_input: str) -> List[Dict]:
     try:
         return notion_client.get_comments(block_id=tool_input)
     except NotionAPIError as e:
-        raise Exception(f"Failed to fetch comments for block {tool_input}: {str(e)}")
+        raise Exception(f"Failed to fetch comments for block {block_id}: {str(e)}")
 
 @tool("insert_notion_comment")
 def insert_comment_tool(tool_input: NotionCommentInput) -> Dict:
@@ -302,7 +302,7 @@ def run_notion_agent(query: str, chat_history: Optional[List] = None, agent_scra
         "agent_scratchpad": agent_scratchpad
     })
     
-    return result["output"]
+    return result["messages"][-1].content
 # Create the Notion agent instance
 notion_agent = create_notion_agent()
 
@@ -316,7 +316,7 @@ if __name__ == "__main__":
     # 다양한 테스트 쿼리 준비
     test_queries = [
         "Get the title of page with id 1e7ff0df284780d0973bf7d70305a2f4",
-        "Get all blocks from the page with id 1e7ff0df284780d0973bf7d70305a2f4",
+        # "Get all blocks from the page with id 1e7ff0df284780d0973bf7d70305a2f4",
     ]
     
     # 각 쿼리 실행 및 결과 출력
