@@ -166,7 +166,7 @@ def get_page_blocks_tool(page_id: str) -> List[Dict]:
         List[Dict]: List of blocks from the Notion page
     """
     try:
-        return notion_client.get_page_blocks(tool_input)
+        return notion_client.get_page_blocks(page_id)
     except NotionAPIError as e:
         raise Exception(f"Failed to fetch blocks for page {page_id}: {str(e)}")
 
@@ -181,7 +181,7 @@ def get_page_comments_tool(page_id: str) -> List[Dict]:
         List[Dict]: List of comments from the Notion page
     """
     try:
-        return notion_client.get_comments(block_id=tool_input)
+        return notion_client.get_comments(block_id=page_id)
     except NotionAPIError as e:
         raise Exception(f"Failed to fetch comments for page {page_id}: {str(e)}")
 
@@ -196,7 +196,7 @@ def get_block_comments_tool(block_id: str) -> List[Dict]:
         List[Dict]: List of comments from the Notion block
     """
     try:
-        return notion_client.get_comments(block_id=tool_input)
+        return notion_client.get_comments(block_id=block_id)
     except NotionAPIError as e:
         raise Exception(f"Failed to fetch comments for block {block_id}: {str(e)}")
 
@@ -221,17 +221,17 @@ def insert_comment_tool(tool_input: NotionCommentInput) -> Dict:
         raise Exception(f"Invalid input: {str(e)}")
 
 @tool("get_notion_page_title")
-def get_page_title_tool(tool_input: str) -> str:
+def get_page_title_tool(page_id: str) -> str:
     """Get the title of a Notion page.
     
     Args:
-        tool_input (str): The ID of the Notion page
+        page_id (str): The ID of the Notion page
         
     Returns:
         str: The title of the Notion page
     """
     try:
-        page_data = notion_client.get_page(tool_input)
+        page_data = notion_client.get_page(page_id)
         title_property = page_data.get("properties", {}).get("title", {})
         if not title_property:
             raise Exception("Title property not found in page")
@@ -242,7 +242,7 @@ def get_page_title_tool(tool_input: str) -> str:
             
         return title_text[0].get("plain_text", "")
     except NotionAPIError as e:
-        raise Exception(f"Failed to fetch page title for {tool_input}: {str(e)}")
+        raise Exception(f"Failed to fetch page title for {page_id}: {str(e)}")
 
 @tool("insert_notion_page_comment")
 def insert_page_comment_tool(tool_input: NotionPageCommentInput) -> Dict:
@@ -282,26 +282,10 @@ def create_notion_agent():
 
     return create_react_agent(model=llm, tools=tools, prompt=prompt, name="notion_agent")
 
-def run_notion_agent(query: str, chat_history: Optional[List] = None, agent_scratchpad: Optional[List] = None) -> str:
-    """Run the Notion agent with the given query and chat history.
-    
-    Args:
-        query (str): The user's query
-        chat_history (Optional[List]): Previous conversation history
-        
-    Returns:
-        str: The agent's response
-    """
-    if chat_history is None:
-        chat_history = []
-        
+def run_notion_agent(query: str, history: list | None = None):
+    history = history or []
     agent = create_notion_agent()
-    result = agent.invoke({
-        "input": query,
-        "chat_history": chat_history,
-        "agent_scratchpad": agent_scratchpad
-    })
-    
+    result = agent.invoke({"messages": [HumanMessage(content=query)] + history})
     return result["messages"][-1].content
 # Create the Notion agent instance
 notion_agent = create_notion_agent()
@@ -316,6 +300,7 @@ if __name__ == "__main__":
     # 다양한 테스트 쿼리 준비
     test_queries = [
         "Get the title of page with id 1e7ff0df284780d0973bf7d70305a2f4",
+        "너는 누구야",
         # "Get all blocks from the page with id 1e7ff0df284780d0973bf7d70305a2f4",
     ]
     
