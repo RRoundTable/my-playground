@@ -10,7 +10,7 @@ from langchain_openai import ChatOpenAI
 from langchain_core.tools import tool
 from langgraph.prebuilt import create_react_agent
 from dotenv import load_dotenv
-from src.prompts import create_title_evaluation_prompt
+from src.prompts import create_title_evaluation_prompt, create_title_agent_prompt
 from pydantic import BaseModel
 
 # Load environment variables
@@ -54,7 +54,7 @@ def create_title_agent():
     
     tools = [evaluate_title_tool]
     
-    prompt = create_title_evaluation_prompt()
+    prompt = create_title_agent_prompt()
 
     return create_react_agent(
         model=llm,
@@ -89,16 +89,9 @@ def run_title_agent(
         "chat_history": chat_history,
         "agent_scratchpad": agent_scratchpad
     })
-    
+
     # Extract the final answer from the agent's response
-    if isinstance(result, dict):
-        if "output" in result:
-            return result["output"]
-        elif "final_answer" in result:
-            return result["final_answer"]
-        else:
-            return str(result)
-    return str(result)
+    return result["messages"][-1].content
 
 # Create the title agent instance
 title_agent = create_title_agent()
