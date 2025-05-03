@@ -12,9 +12,6 @@ RUN apt-get update && apt-get install -y \
 # Copy pyproject.toml first
 COPY pyproject.toml /app/
 
-# Copy the rest of the project files
-COPY src /app/src/
-
 # Install poetry
 RUN pip install poetry
 
@@ -23,6 +20,9 @@ RUN poetry config virtualenvs.create false
 
 # Install dependencies
 RUN poetry install --no-interaction --no-ansi
+
+# Copy the rest of the project files
+COPY src /app/src/
 
 # Expose the port the app runs on
 EXPOSE 8000

@@ -1,200 +1,280 @@
 """
-Notion Agent
+Notion Agent using LangChain and LangGraph
 
-Notion agent is a tool that allows you to create, read, update, and delete Notion pages.
+This agent provides tools to interact with Notion API using LangChain and LangGraph.
 """
 
-from typing import Dict, List, Optional
-import requests
-from pydantic import BaseModel
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.middleware.cors import CORSMiddleware
+from typing import Dict, List, Optional, Type
 import os
 from dotenv import load_dotenv
+from pydantic import BaseModel, Field
+from langchain.tools import BaseTool
+from langchain.agents import AgentExecutor, create_openai_functions_agent
+from langchain_openai import ChatOpenAI
+from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.tools import tool
+import requests
 
 load_dotenv()
 
-class NotionAgent:
-    def __init__(self):
-        self.notion_token = os.getenv("NOTION_TOKEN")
-        self.headers = {
-            "Authorization": f"Bearer {self.notion_token}",
-            "Notion-Version": "2022-06-28",
-            "Content-Type": "application/json"
-        }
-        self.base_url = "https://api.notion.com/v1"
-        self.app = FastAPI(
-            title="Notion Agent API",
-            description="API for handling Notion webhooks and page operations",
-            version="1.0.0",
-            docs_url="/docs",
-            redoc_url="/redoc",
-            servers=[
-                {"url": "https://ai-agent.nocoders.ai", "description": "Production server"},
-                {"url": "http://localhost:8000", "description": "Local development server"}
-            ]
-        )
-        
-        # Configure CORS
-        self.app.add_middleware(
-            CORSMiddleware,
-            allow_origins=["*"],  # In production, replace with specific origins
-            allow_credentials=True,
-            allow_methods=["*"],
-            allow_headers=["*"],
-        )
-        
-        self.setup_webhook()
+class NotionPageInput(BaseModel):
+    """Input for Notion page operations."""
+    page_id: str = Field(..., description="The ID of the Notion page")
 
-    def get_page(self, page_id: str) -> Dict:
-        """Fetch a Notion page by its ID."""
-        try:
+class NotionCommentInput(BaseModel):
+    """Input for Notion comment operations."""
+    block_id: str = Field(..., description="The ID of the Notion block to comment on")
+    text: str = Field(..., description="The text content of the comment")
+
+def get_notion_headers():
+    """Get Notion API headers."""
+    notion_token = os.getenv("NOTION_TOKEN")
+    return {
+        "Authorization": f"Bearer {notion_token}",
+        "Notion-Version": "2022-06-28",
+        "Content-Type": "application/json"
+    }
+
+def get_base_url():
+    """Get Notion API base URL."""
+    return "https://api.notion.com/v1"
+
+@tool("get_notion_page")
+def get_page_tool(tool_input: str) -> Dict:
+    """Fetch a Notion page by its ID.
+    
+    Args:
+        tool_input (str): The ID of the Notion page to fetch
+        
+    Returns:
+        Dict: The page data from Notion API
+    """
+    try:
+        response = requests.get(
+            f"{get_base_url()}/pages/{tool_input}",
+            headers=get_notion_headers()
+        )
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.RequestException as e:
+        error_detail = f"Failed to fetch page {tool_input}: {str(e)}"
+        if hasattr(e.response, 'json'):
+            error_detail += f" - {e.response.json()}"
+        raise Exception(error_detail)
+
+@tool("get_notion_page_blocks")
+def get_page_blocks_tool(tool_input: str) -> List[Dict]:
+    """Fetch all blocks from a Notion page.
+    
+    Args:
+        tool_input (str): The ID of the Notion page to fetch blocks from
+        
+    Returns:
+        List[Dict]: List of blocks from the Notion page
+    """
+    try:
+        blocks = []
+        has_more = True
+        start_cursor = None
+
+        while has_more:
+            params = {}
+            if start_cursor:
+                params["start_cursor"] = start_cursor
+
             response = requests.get(
-                f"{self.base_url}/pages/{page_id}",
-                headers=self.headers
+                f"{get_base_url()}/blocks/{tool_input}/children",
+                headers=get_notion_headers(),
+                params=params
             )
             response.raise_for_status()
-            return response.json()
-        except requests.exceptions.RequestException as e:
-            raise HTTPException(status_code=400, detail=str(e))
-
-    def get_page_blocks(self, page_id: str) -> List[Dict]:
-        """Fetch all blocks from a Notion page."""
-        try:
-            blocks = []
-            has_more = True
-            start_cursor = None
-
-            while has_more:
-                params = {}
-                if start_cursor:
-                    params["start_cursor"] = start_cursor
-
-                response = requests.get(
-                    f"{self.base_url}/blocks/{page_id}/children",
-                    headers=self.headers,
-                    params=params
-                )
-                response.raise_for_status()
-                data = response.json()
-                
-                blocks.extend(data["results"])
-                has_more = data["has_more"]
-                start_cursor = data.get("next_cursor")
-
-            return blocks
-        except requests.exceptions.RequestException as e:
-            raise HTTPException(status_code=400, detail=str(e))
-
-    def setup_webhook(self):
-        """Setup webhook endpoint for Notion integration."""
-        @self.app.post("/notion-webhook")
-        async def handle_notion_webhook(request: Request):
-            try:
-                # Get the webhook payload
-                payload = await request.json()
-                print(f"Received webhook payload: {payload}")
-
-                # Extract page ID from the payload
-                # Notion webhook payload structure:
-                # {
-                #   "object": "page",
-                #   "id": "page_id",
-                #   "created_time": "...",
-                #   "last_edited_time": "...",
-                #   "parent": {...},
-                #   "archived": false,
-                #   "properties": {...}
-                # }
-                page_id = payload.get("id")
-                if not page_id:
-                    return {"status": "error", "message": "No page ID in payload"}
-
-                # Get the page details
-                page = self.get_page(page_id)
-                print(f"Retrieved page: {page}")
-
-                # Get all blocks from the page
-                blocks = self.get_page_blocks(page_id)
-                print(f"Retrieved {len(blocks)} blocks")
-
-                # Check if the page has a review tag
-                if self._has_review_tag(page):
-                    print("Page has review tag, processing...")
-                    # Here you can add your custom logic for handling review pages
-                    return {
-                        "status": "success",
-                        "message": "Review page processed",
-                        "page": page,
-                        "blocks": blocks
-                    }
-                
-                return {
-                    "status": "success",
-                    "message": "Page processed",
-                    "page": page,
-                    "blocks": blocks
-                }
+            data = response.json()
             
-            except Exception as e:
-                print(f"Error processing webhook: {str(e)}")
-                raise HTTPException(status_code=400, detail=str(e))
+            blocks.extend(data["results"])
+            has_more = data["has_more"]
+            start_cursor = data.get("next_cursor")
 
-    def _has_review_tag(self, page: Dict) -> bool:
-        """Check if the page has a review tag."""
-        try:
-            properties = page.get("properties", {})
-            
-            # Check for tags in different possible property names
-            for prop_name in ["Tags", "tags", "Tag", "tag"]:
-                tags_property = properties.get(prop_name)
-                if tags_property and tags_property.get("type") == "multi_select":
-                    tags = tags_property.get("multi_select", [])
-                    if any(tag.get("name", "").lower() == "review" for tag in tags):
-                        return True
-            
-            return False
-            
-        except Exception as e:
-            print(f"Error checking review tag: {str(e)}")
-            return False
+        return blocks
+    except requests.exceptions.RequestException as e:
+        error_detail = f"Failed to fetch blocks for page {tool_input}: {str(e)}"
+        if hasattr(e.response, 'json'):
+            error_detail += f" - {e.response.json()}"
+        raise Exception(error_detail)
 
-    def run_webhook_server(self, host: str = "0.0.0.0", port: int = 8000, ssl_keyfile: str = None, ssl_certfile: str = None):
-        """Run the FastAPI webhook server with optional SSL configuration."""
-        import uvicorn
-        
-        ssl_config = {}
-        if ssl_keyfile and ssl_certfile:
-            ssl_config = {
-                "ssl_keyfile": ssl_keyfile,
-                "ssl_certfile": ssl_certfile
-            }
-        
-        uvicorn.run(
-            self.app,
-            host=host,
-            port=port,
-            **ssl_config
-        )
-
-# Test section
-if __name__ == "__main__":
-    # Initialize NotionAgent
-    notion_agent = NotionAgent()
+@tool("get_notion_page_comments")
+def get_page_comments_tool(tool_input: str) -> List[Dict]:
+    """Fetch all comments from a Notion page.
     
-    # Test webhook server
-    print("Starting webhook server...")
-    print("Server will run on https://ai-agent.nocoders.ai")
-    print("Press Ctrl+C to stop the server")
-    
+    Args:
+        tool_input (str): The ID of the Notion page to fetch comments from
+        
+    Returns:
+        List[Dict]: List of comments from the Notion page
+    """
     try:
-        # For production, you would use SSL certificates
-        # notion_agent.run_webhook_server(
-        #     ssl_keyfile="path/to/privkey.pem",
-        #     ssl_certfile="path/to/cert.pem"
-        # )
+        comments = []
+        has_more = True
+        start_cursor = None
+
+        while has_more:
+            params = {"block_id": tool_input}
+            if start_cursor:
+                params["start_cursor"] = start_cursor
+
+            response = requests.get(
+                f"{get_base_url()}/comments",
+                headers=get_notion_headers(),
+                params=params
+            )
+            response.raise_for_status()
+            data = response.json()
+            
+            comments.extend(data["results"])
+            has_more = data["has_more"]
+            start_cursor = data.get("next_cursor")
+
+        return comments
+    except requests.exceptions.RequestException as e:
+        error_detail = f"Failed to fetch comments for page {tool_input}: {str(e)}"
+        if hasattr(e.response, 'json'):
+            error_detail += f" - {e.response.json()}"
+        raise Exception(error_detail)
+
+@tool("get_notion_block_comments")
+def get_block_comments_tool(tool_input: str) -> List[Dict]:
+    """Fetch all comments from a specific Notion block.
+    
+    Args:
+        tool_input (str): The ID of the Notion block to fetch comments from
         
-        # For local development
-        notion_agent.run_webhook_server()
-    except KeyboardInterrupt:
-        print("\nServer stopped")
+    Returns:
+        List[Dict]: List of comments from the Notion block
+    """
+    try:
+        comments = []
+        has_more = True
+        start_cursor = None
+
+        while has_more:
+            params = {"block_id": tool_input}
+            if start_cursor:
+                params["start_cursor"] = start_cursor
+
+            response = requests.get(
+                f"{get_base_url()}/comments",
+                headers=get_notion_headers(),
+                params=params
+            )
+            response.raise_for_status()
+            data = response.json()
+            
+            # Filter comments that belong to the specific block
+            block_comments = [comment for comment in data["results"] 
+                            if comment.get("parent", {}).get("block_id") == tool_input]
+            comments.extend(block_comments)
+            
+            has_more = data["has_more"]
+            start_cursor = data.get("next_cursor")
+
+        return comments
+    except requests.exceptions.RequestException as e:
+        error_detail = f"Failed to fetch comments for block {tool_input}: {str(e)}"
+        if hasattr(e.response, 'json'):
+            error_detail += f" - {e.response.json()}"
+        raise Exception(error_detail)
+
+@tool("insert_notion_comment")
+def insert_comment_tool(tool_input: NotionCommentInput) -> Dict:
+    """Insert a comment into a Notion block.
+    
+    Args:
+        tool_input (NotionCommentInput): Input containing block_id and text
+        
+    Returns:
+        Dict: The created comment data from Notion API
+    """
+    try:
+        block_id = tool_input.block_id
+        text = tool_input.text
+            
+        payload = {
+            "parent": {
+                "block_id": block_id
+            },
+            "rich_text": [
+                {
+                    "text": {
+                        "content": text
+                    }
+                }
+            ]
+        }
+        
+        response = requests.post(
+            f"{get_base_url()}/comments",
+            headers=get_notion_headers(),
+            json=payload
+        )
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.RequestException as e:
+        error_detail = f"Failed to insert comment: {str(e)}"
+        if hasattr(e.response, 'json'):
+            error_detail += f" - {e.response.json()}"
+        raise Exception(error_detail)
+    except ValueError as e:
+        raise Exception(f"Invalid input: {str(e)}")
+
+def create_notion_agent():
+    """Create and return a LangChain agent with Notion tools."""
+    llm = ChatOpenAI(temperature=0, model="gpt-4.1-nano")
+    
+    tools = [
+        get_page_tool,
+        get_page_blocks_tool,
+        get_page_comments_tool,
+        get_block_comments_tool,
+        insert_comment_tool
+    ]
+    
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", """You are a helpful assistant that can interact with Notion.
+        You have access to tools that can fetch page information, blocks, and comments from Notion,
+        and can also insert new comments into blocks.
+        Use these tools to help users with their Notion-related tasks."""),
+        MessagesPlaceholder(variable_name="chat_history"),
+        ("human", "{input}"),
+        MessagesPlaceholder(variable_name="agent_scratchpad"),
+    ])
+    
+    agent = create_openai_functions_agent(llm, tools, prompt)
+    return AgentExecutor(agent=agent, tools=tools, verbose=True)
+
+def run_notion_agent(query: str, chat_history: Optional[List] = None) -> str:
+    """Run the Notion agent with the given query and chat history.
+    
+    Args:
+        query (str): The user's query
+        chat_history (Optional[List]): Previous conversation history
+        
+    Returns:
+        str: The agent's response
+    """
+    if chat_history is None:
+        chat_history = []
+        
+    agent = create_notion_agent()
+    result = agent.invoke({
+        "input": query,
+        "chat_history": chat_history
+    })
+    
+    return result["output"]
+
+# Example usage
+if __name__ == "__main__":
+    # Example query
+    query = "Add a comment 'This is a test comment' to block 1e7ff0df-2847-800c-91be-c3a6fe26d3b5"
+    response = run_notion_agent(query)
+    print(response)

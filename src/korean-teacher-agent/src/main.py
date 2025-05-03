@@ -1,6 +1,15 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from pydantic import BaseModel
 from typing import Dict
+import logging
+import json
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="Korean Teacher Agent",
@@ -23,13 +32,12 @@ async def health_check():
         "version": "1.0.0"
     }
 
-@app.get("/dummy-data")
-async def get_dummy_data():
-    return {
-        "korean_phrases": [
-            "안녕하세요 (Hello)",
-            "감사합니다 (Thank you)",
-            "미안합니다 (I'm sorry)"
-        ],
-        "count": 3
-    }
+
+class WebhookRequest(BaseModel):
+    verification_token: str
+
+@app.post("/webhook")
+async def handle_webhook(request: WebhookRequest):
+    logger.info(f"Received webhook with verification token: {request.verification_token}")
+    logger.info(f"Webhook request body: {request.model_dump_json()}")
+    return {"status": "success"}
