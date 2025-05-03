@@ -15,6 +15,7 @@ from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.tools import tool
 import requests
+from src.prompts import create_notion_agent_prompt
 
 load_dotenv()
 
@@ -238,18 +239,9 @@ def create_notion_agent():
         insert_comment_tool
     ]
     
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", """You are a helpful assistant that can interact with Notion.
-        You have access to tools that can fetch page information, blocks, and comments from Notion,
-        and can also insert new comments into blocks.
-        Use these tools to help users with their Notion-related tasks."""),
-        MessagesPlaceholder(variable_name="chat_history"),
-        ("human", "{input}"),
-        MessagesPlaceholder(variable_name="agent_scratchpad"),
-    ])
-    
+    prompt = create_notion_agent_prompt()
     agent = create_openai_functions_agent(llm, tools, prompt)
-    return AgentExecutor(agent=agent, tools=tools, verbose=True)
+    return AgentExecutor.from_agent_and_tools(agent=agent, tools=tools, verbose=True)
 
 def run_notion_agent(query: str, chat_history: Optional[List] = None) -> str:
     """Run the Notion agent with the given query and chat history.
