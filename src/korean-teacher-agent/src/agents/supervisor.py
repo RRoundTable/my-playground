@@ -5,12 +5,13 @@ This agent coordinates between the Notion agent and Title agent to manage workfl
 """
 
 from typing import Dict, List, Optional, Union, TypedDict
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage
 from langchain_openai import ChatOpenAI
 from langgraph_supervisor import create_supervisor
 from dotenv import load_dotenv
 from src.agents.notion_agent import notion_agent
 from src.agents.title_agent import title_agent
+from src.prompts import create_supervisor_prompt
 
 # Load environment variables
 load_dotenv()
@@ -26,18 +27,7 @@ workflow = create_supervisor(
     [notion_agent, title_agent],
     model=llm,
     supervisor_name="korean_teacher_supervisor",
-    prompt=(
-        "You are a team supervisor managing specialized agents:\n"
-        "- title_agent: Evaluates titles and provides feedback\n"
-        "- notion_agent: Interacts with Notion pages, blocks, and comments\n\n"
-        "Always use title_agent to evaluate titles.\n"
-        "Always use notion_agent for Notion-related tasks like fetching pages, blocks, or adding comments.\n"
-        "Your job is to route tasks to the appropriate agent based on the user's query.\n"
-        "For title evaluation or feedback, use title_agent.\n"
-        "For Notion interactions, use notion_agent.\n"
-        "Please respond in Korean language."
-    )
-    
+    prompt=create_supervisor_prompt()
 )
 
 # Compile the workflow
@@ -59,8 +49,8 @@ def run_supervisor_agent(
     Returns:
         Dict: Results from the appropriate agent
     """
-    # Convert query to message format
-    messages = [{"role": "user", "content": query}]
+    # Initialize messages list
+    messages = []
     
     # Add chat history if exists
     if chat_history:
@@ -69,6 +59,11 @@ def run_supervisor_agent(
                 messages.append({"role": "user", "content": msg.content})
             elif isinstance(msg, AIMessage):
                 messages.append({"role": "assistant", "content": msg.content})
+            elif isinstance(msg, ToolMessage):
+                messages.append({"role": "tool", "content": msg.content, "tool_call_id": msg.tool_call_id})
+    
+    # Add the current query at the end
+    messages.append({"role": "user", "content": query})
 
     result = app.invoke({
         "messages": messages,
@@ -78,8 +73,6 @@ def run_supervisor_agent(
     
     return {
         "messages": result["messages"],
-        "agent_used": result.get("active_agent", "unknown"),
-        "result": result.get("output", "")
     }
 
 # Example usage
@@ -103,9 +96,7 @@ if __name__ == "__main__":
             result = run_supervisor_agent(user_input, chat_history)
             
             print("\n" + "="*50)
-            print(f"Agent Used: {result['agent_used']}")
-            print("="*50)
-            
+
             # Immediately display the response
             if 'messages' in result and result['messages']:
                 last_message = result['messages'][-1]
