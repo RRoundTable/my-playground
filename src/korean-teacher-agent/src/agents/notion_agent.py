@@ -76,8 +76,8 @@ def get_page_tool(page_id: str) -> Dict:
     except NotionAPIError as e:
         raise Exception(f"Failed to fetch page {page_id}: {str(e)}")
 
-@tool("get_notion_page_blocks")
-def get_page_blocks_tool(page_id: str) -> List[Dict]:
+@tool("get_notion_page_paragraph_text_blocks")
+def get_page_paragraph_text_blocks_tool(page_id: str) -> List[Dict]:
     """Fetch all blocks from a Notion page.
     
     Args:
@@ -87,12 +87,12 @@ def get_page_blocks_tool(page_id: str) -> List[Dict]:
         List[Dict]: List of blocks from the Notion page
     """
     try:
-        return notion_client.get_page_blocks(page_id)
+        return notion_client.get_paragraph_text_blocks(page_id)
     except NotionAPIError as e:
         raise Exception(f"Failed to fetch blocks for page {page_id}: {str(e)}")
 
-@tool("get_notion_page_comments")
-def get_page_comments_tool(page_id: str) -> List[Dict]:
+@tool("get_notion_page_comment_content_blocks")
+def get_page_comment_content_blocks_tool(page_id: str) -> List[Dict]:
     """Fetch all comments from a Notion page.
     
     Args:
@@ -102,7 +102,7 @@ def get_page_comments_tool(page_id: str) -> List[Dict]:
         List[Dict]: List of comments from the Notion page
     """
     try:
-        return notion_client.get_comments(block_id=page_id)
+        return notion_client.get_comment_content_blocks(block_id=page_id)
     except NotionAPIError as e:
         raise Exception(f"Failed to fetch comments for page {page_id}: {str(e)}")
 
@@ -210,8 +210,8 @@ def create_notion_agent():
     
     tools = [
         get_page_tool,
-        get_page_blocks_tool,
-        get_page_comments_tool,
+        get_page_paragraph_text_blocks_tool,
+        get_page_comment_content_blocks_tool,
         get_block_comments_tool,
         insert_comment_tool,
         get_page_title_tool,
@@ -227,6 +227,7 @@ def run_notion_agent(query: str, history: list | None = None):
     history = history or []
     agent = create_notion_agent()
     result = agent.invoke({"messages": [HumanMessage(content=query)] + history})
+    
     return result["messages"][-1].content
 # Create the Notion agent instance
 notion_agent = create_notion_agent()
