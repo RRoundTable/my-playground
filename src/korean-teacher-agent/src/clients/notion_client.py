@@ -121,3 +121,119 @@ class NotionAPIClient:
             json=payload
         )
         return self._handle_response(response) 
+
+
+if __name__ == "__main__":
+    """Test script to demonstrate all NotionAPIClient functionality.
+    
+    환경 변수에 NOTION_TOKEN과 테스트용 PAGE_ID가 설정되어 있어야 합니다.
+    """
+    import json
+    from pprint import pprint
+    
+    # Notion API 클라이언트 초기화
+    client = NotionAPIClient()
+    
+    # 테스트용 페이지 ID (실제 존재하는 Notion 페이지 ID 필요)
+    # .env 파일에 TEST_PAGE_ID 설정 또는 아래 직접 입력
+    test_page_id = os.getenv("TEST_PAGE_ID", "1e9ff0df28478038a184fe3371797f96")
+    
+    if not test_page_id:
+        print("ERROR: 테스트용 페이지 ID가 필요합니다. .env 파일에 TEST_PAGE_ID를 설정하세요.")
+        exit(1)
+    
+    print("=" * 50)
+    print("NotionAPIClient 테스트 시작")
+    print("=" * 50)
+    
+    try:
+        # 1. 페이지 정보 가져오기
+        print("\n1. 페이지 정보 가져오기:")
+        page_info = client.get_page(test_page_id)
+        print(f"페이지 제목: {page_info.get('properties', {}).get('title', {}).get('title', [{}])[0].get('plain_text', 'Unknown')}")
+        print(f"페이지 ID: {page_info.get('id')}")
+        print(f"생성 시간: {page_info.get('created_time')}")
+        print(f"최종 수정 시간: {page_info.get('last_edited_time')}")
+        
+        # 2. 페이지 블록 가져오기
+        print("\n2. 페이지 블록 목록 가져오기:")
+        blocks = client.get_page_blocks(test_page_id)
+        print(f"총 {len(blocks)}개의 블록을 찾았습니다.")
+        
+        if blocks:
+            print("\n첫 번째 블록 정보:")
+            first_block = blocks[0]
+            block_id = first_block.get("id")
+            block_type = first_block.get("type")
+            print(f"블록 ID: {block_id}")
+            print(f"블록 타입: {block_type}")
+            print(f"블록 내용: {json.dumps(first_block.get(block_type, {}), indent=2, ensure_ascii=False)}")
+            
+            # 3. 블록에 코멘트 추가하기
+            print("\n3. 블록에 코멘트 추가하기:")
+            comment_text = "이것은 API 테스트를 위한 코멘트입니다."
+            comment = client.insert_comment(comment_text, block_id=block_id)
+            print(f"코멘트 ID: {comment.get('id')}")
+            print(f"코멘트 내용: {comment.get('rich_text', [{}])[0].get('text', {}).get('content')}")
+            print(f"생성 시간: {comment.get('created_time')}")
+            
+            # 4. 블록의 코멘트 가져오기
+            print("\n4. 블록의 코멘트 가져오기:")
+            comments = client.get_comments(block_id=block_id)
+            print(f"총 {len(comments)}개의 코멘트를 찾았습니다.")
+            if comments:
+                print("\n최근 코멘트 내용:")
+                for i, comment in enumerate(comments[:3], 1):
+                    comment_content = comment.get('rich_text', [{}])[0].get('text', {}).get('content', 'No content')
+                    print(f"코멘트 {i}: {comment_content}")
+        
+        # 5. 페이지에 코멘트 추가하기
+        print("\n5. 페이지에 코멘트 추가하기:")
+        page_comment_text = "이것은 페이지 전체에 대한 API 테스트 코멘트입니다."
+        page_comment = client.insert_comment(page_comment_text, page_id=test_page_id)
+        print(f"페이지 코멘트 ID: {page_comment.get('id')}")
+        print(f"페이지 코멘트 내용: {page_comment.get('rich_text', [{}])[0].get('text', {}).get('content')}")
+        
+        # 6. 페이지 속성 업데이트하기
+        print("\n6. 페이지 속성 업데이트하기:")
+        # 참고: properties 구조는 페이지의 데이터베이스 구조에 따라 달라집니다.
+        # 아래는 일반적인 Title 속성을 가진 페이지의 예시입니다.
+        properties = {
+            "Title": {
+                "title": [
+                    {
+                        "type": "text",
+                        "text": {
+                            "content": "API로 업데이트된 페이지 제목"
+                        }
+                    }
+                ]
+            }
+        }
+        updated_page = client.update_page_properties(test_page_id, properties)
+        print("페이지 속성이 업데이트되었습니다.")
+        print(f"업데이트된 제목: {updated_page.get('properties', {}).get('Title', {}).get('title', [{}])[0].get('plain_text', 'Unknown')}")
+        print(f"최종 수정 시간: {updated_page.get('last_edited_time')}")
+        
+    except NotionAPIError as e:
+        print(f"Notion API 에러 발생: {e}")
+        if e.response:
+            print(f"상태 코드: {e.response.status_code}")
+            try:
+                print(f"에러 상세: {e.response.json()}")
+            except:
+                print(f"응답 본문: {e.response.text}")
+    except Exception as e:
+        print(f"일반 에러 발생: {e}")
+    
+    print("\n" + "=" * 50)
+    print("NotionAPIClient 테스트 완료")
+    print("=" * 50)
+
+    print("\n테스트 실행 방법:")
+    print("1. '.env' 파일에 다음 환경 변수를 설정하세요:")
+    print("   NOTION_TOKEN=your_notion_integration_token")
+    print("   TEST_PAGE_ID=your_test_page_id")
+    print("2. 다음 명령어로 테스트를 실행하세요:")
+    print("   python notion_client.py")
+
