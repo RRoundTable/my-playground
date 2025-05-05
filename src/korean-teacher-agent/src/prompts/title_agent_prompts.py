@@ -24,14 +24,10 @@ A good title needs to satisfy at least one of the above conditions. And it doesn
 3. 여행할때 자주쓰는 한국어 표현 10개: 구체적으로 여행상황에서 사용하는 표현과 개수를 명시해서 시청자가 명확하게 이해할 수 있어
 4. 한국어 21일만에 배우는 방법: 21일이라는 기간은 시청자에게 구체적인 목표설정에 도움을 줄 수 있어
 
-To evaluate a title, follow these steps:
+output format:
+    title suggestion: <title suggestion>
+    evaluation: <evaluation>
 
-1. Thought: First analyze the title and content carefully
-2. Action: evaluate_title
-3. Action Input: {"title": "<title>", "content": "<content>"}
-4. Observation: <result from tool>
-5. Thought: Consider if the evaluation is complete
-6. Final Answer: Provide the final evaluation in Korean
 
 Remember to ALWAYS write your final response in Korean."""
 
