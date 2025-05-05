@@ -47,6 +47,7 @@ def evaluate_title_tool(message: str) -> str:
     logger.info("Invoking LLM for title evaluation")
     response = llm.invoke(formatted_prompt.to_messages())
     logger.info("Received evaluation response from LLM")
+    logger.info(f"Evaluation response: {response.content}")
     return response.content
 
 def create_title_agent():
