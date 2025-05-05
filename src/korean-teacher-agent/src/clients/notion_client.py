@@ -73,6 +73,76 @@ class NotionAPIClient:
             f"{self.base_url}/blocks/{page_id}/children"
         )
     
+    def get_paragraph_text_blocks(self, page_id: str) -> List[Dict[str, str]]:
+        """Get only paragraph blocks with their plaintext content and ID.
+        
+        Args:
+            page_id (str): The ID of the Notion page
+            
+        Returns:
+            List[Dict[str, str]]: List of dictionaries containing 'id' and 'content' keys
+        """
+        blocks = self.get_page_blocks(page_id)
+        paragraph_blocks = []
+        
+        for block in blocks:
+            if block.get('type') == 'paragraph':
+                content = ""
+                rich_text = block.get('paragraph', {}).get('rich_text', [])
+                
+                for text_item in rich_text:
+                    content += text_item.get('plain_text', '')
+                
+                if content:  # Only include if there's actual content
+                    paragraph_blocks.append({
+                        'id': block.get('id'),
+                        'content': content
+                    })
+                    
+        return paragraph_blocks
+    
+    def get_comment_content_blocks(self, block_id: Optional[str] = None, page_id: Optional[str] = None) -> List[Dict[str, str]]:
+        """Get comments with their plaintext content and ID, plus parent information.
+        
+        Args:
+            block_id (Optional[str]): The ID of the block to get comments from
+            page_id (Optional[str]): The ID of the page to get comments from
+            
+        Returns:
+            List[Dict[str, str]]: List of dictionaries containing 'id', 'content', and 'parent' keys
+        """
+        # Get comments from the block or page
+        comments = self.get_comments(block_id)
+        comment_blocks = []
+        
+        for comment in comments:
+            content = ""
+            rich_text = comment.get('rich_text', [])
+            
+            for text_item in rich_text:
+                content += text_item.get('plain_text', '')
+            
+            parent_info = comment.get('parent', {})
+            parent_type = parent_info.get('type')
+            parent_id = None
+            
+            if parent_type == 'database_id':
+                parent_id = parent_info.get('database_id')
+            elif parent_type == 'page_id':
+                parent_id = parent_info.get('page_id')
+            elif parent_type == 'block_id':
+                parent_id = parent_info.get('block_id')
+            
+            if content:  # Only include if there's actual content
+                comment_blocks.append({
+                    'id': comment.get('id'),
+                    'content': content,
+                    'parent_type': parent_type,
+                    'parent_id': parent_id
+                })
+                
+        return comment_blocks
+    
     def get_comments(self, block_id: str = None) -> List[Dict]:
         """Get comments from a block or page.
         
@@ -146,94 +216,21 @@ if __name__ == "__main__":
     print("NotionAPIClient 테스트 시작")
     print("=" * 50)
     
-    try:
-        # 1. 페이지 정보 가져오기
-        print("\n1. 페이지 정보 가져오기:")
-        page_info = client.get_page(test_page_id)
-        print(f"페이지 제목: {page_info.get('properties', {}).get('title', {}).get('title', [{}])[0].get('plain_text', 'Unknown')}")
-        print(f"페이지 ID: {page_info.get('id')}")
-        print(f"생성 시간: {page_info.get('created_time')}")
-        print(f"최종 수정 시간: {page_info.get('last_edited_time')}")
-        
-        # 2. 페이지 블록 가져오기
-        print("\n2. 페이지 블록 목록 가져오기:")
-        blocks = client.get_page_blocks(test_page_id)
-        print(f"총 {len(blocks)}개의 블록을 찾았습니다.")
-        
-        if blocks:
-            print("\n첫 번째 블록 정보:")
-            first_block = blocks[0]
-            block_id = first_block.get("id")
-            block_type = first_block.get("type")
-            print(f"블록 ID: {block_id}")
-            print(f"블록 타입: {block_type}")
-            print(f"블록 내용: {json.dumps(first_block.get(block_type, {}), indent=2, ensure_ascii=False)}")
-            
-            # 3. 블록에 코멘트 추가하기
-            print("\n3. 블록에 코멘트 추가하기:")
-            comment_text = "이것은 API 테스트를 위한 코멘트입니다."
-            comment = client.insert_comment(comment_text, block_id=block_id)
-            print(f"코멘트 ID: {comment.get('id')}")
-            print(f"코멘트 내용: {comment.get('rich_text', [{}])[0].get('text', {}).get('content')}")
-            print(f"생성 시간: {comment.get('created_time')}")
-            
-            # 4. 블록의 코멘트 가져오기
-            print("\n4. 블록의 코멘트 가져오기:")
-            comments = client.get_comments(block_id=block_id)
-            print(f"총 {len(comments)}개의 코멘트를 찾았습니다.")
-            if comments:
-                print("\n최근 코멘트 내용:")
-                for i, comment in enumerate(comments[:3], 1):
-                    comment_content = comment.get('rich_text', [{}])[0].get('text', {}).get('content', 'No content')
-                    print(f"코멘트 {i}: {comment_content}")
-        
-        # 5. 페이지에 코멘트 추가하기
-        print("\n5. 페이지에 코멘트 추가하기:")
-        page_comment_text = "이것은 페이지 전체에 대한 API 테스트 코멘트입니다."
-        page_comment = client.insert_comment(page_comment_text, page_id=test_page_id)
-        print(f"페이지 코멘트 ID: {page_comment.get('id')}")
-        print(f"페이지 코멘트 내용: {page_comment.get('rich_text', [{}])[0].get('text', {}).get('content')}")
-        
-        # 6. 페이지 속성 업데이트하기
-        print("\n6. 페이지 속성 업데이트하기:")
-        # 참고: properties 구조는 페이지의 데이터베이스 구조에 따라 달라집니다.
-        # 아래는 일반적인 Title 속성을 가진 페이지의 예시입니다.
-        properties = {
-            "Title": {
-                "title": [
-                    {
-                        "type": "text",
-                        "text": {
-                            "content": "API로 업데이트된 페이지 제목"
-                        }
-                    }
-                ]
-            }
-        }
-        updated_page = client.update_page_properties(test_page_id, properties)
-        print("페이지 속성이 업데이트되었습니다.")
-        print(f"업데이트된 제목: {updated_page.get('properties', {}).get('Title', {}).get('title', [{}])[0].get('plain_text', 'Unknown')}")
-        print(f"최종 수정 시간: {updated_page.get('last_edited_time')}")
-        
-    except NotionAPIError as e:
-        print(f"Notion API 에러 발생: {e}")
-        if e.response:
-            print(f"상태 코드: {e.response.status_code}")
-            try:
-                print(f"에러 상세: {e.response.json()}")
-            except:
-                print(f"응답 본문: {e.response.text}")
-    except Exception as e:
-        print(f"일반 에러 발생: {e}")
+    # 1. 페이지 정보 가져오기
+    print("\n1. 페이지 정보 가져오기:")
+    page_info = client.get_page(test_page_id)
+    print(f"페이지 제목: {page_info.get('properties', {}).get('title', {}).get('title', [{}])[0].get('plain_text', 'Unknown')}")
+    print(f"페이지 ID: {page_info.get('id')}")
+    print(f"생성 시간: {page_info.get('created_time')}")
+    print(f"최종 수정 시간: {page_info.get('last_edited_time')}")
     
-    print("\n" + "=" * 50)
-    print("NotionAPIClient 테스트 완료")
-    print("=" * 50)
+    # 2. 페이지 블록 가져오기
+    print("\n2. 페이지 block_id, content 가져오기:")
+    blocks = client.get_paragraph_text_blocks(test_page_id)
+    pprint(blocks)
+    print(f"총 {len(blocks)}개의 블록을 찾았습니다.")
 
-    print("\n테스트 실행 방법:")
-    print("1. '.env' 파일에 다음 환경 변수를 설정하세요:")
-    print("   NOTION_TOKEN=your_notion_integration_token")
-    print("   TEST_PAGE_ID=your_test_page_id")
-    print("2. 다음 명령어로 테스트를 실행하세요:")
-    print("   python notion_client.py")
-
+    # 3. 페이지 댓글 가져오기
+    print("\n3. 페이지 댓글 가져오기:")
+    comments = client.get_comment_content_blocks(test_page_id)
+    pprint(comments)
