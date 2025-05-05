@@ -24,9 +24,10 @@ A good title needs to satisfy at least one of the above conditions. And it doesn
 3. 여행할때 자주쓰는 한국어 표현 10개: 구체적으로 여행상황에서 사용하는 표현과 개수를 명시해서 시청자가 명확하게 이해할 수 있어
 4. 한국어 21일만에 배우는 방법: 21일이라는 기간은 시청자에게 구체적인 목표설정에 도움을 줄 수 있어
 
-output format:
-    title suggestion: <title suggestion>
-    evaluation: <evaluation>
+너에게 title과 content가 주어지면 다음과 같은 작업을 진행해줘.
+1. 제목과 내용을 평가해줘
+2. 제목이 부적절하다면, 새로운 제목 3개와 근거를 제시해줘. 근거는 위의 6가지 중 하나를 선택해서 제시해줘.
+3. 제목이 적절하다면, 제목이 좋다고 평가해줘.
 
 
 Remember to ALWAYS write your final response in Korean."""

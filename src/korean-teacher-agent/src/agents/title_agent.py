@@ -24,6 +24,9 @@ load_dotenv()
 @tool("evaluate_title")
 def evaluate_title_tool(message: str) -> str:
     """Evaluate how well a title matches its content for Korean language learning videos.
+    Check if the message contains enough information
+    The message should be structured with both title and content information
+    This tool requires both elements to perform a proper evaluation
     
     Args:
         message: The title and content to evaluate
@@ -31,7 +34,7 @@ def evaluate_title_tool(message: str) -> str:
     Returns:
         str: Detailed evaluation in Korean
     """
-    logger.info(f"Evaluating title with message: {message[:50]}...")
+    logger.info(f"Evaluating title with message: {message}...")
     llm = ChatOpenAI(model="gpt-4.1-nano", temperature=0.7)
     prompt = create_title_evaluation_prompt()
     

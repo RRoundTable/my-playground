@@ -256,7 +256,7 @@ def update_page_properties_tool(tool_input: NotionUpdatePagePropertiesInput) -> 
 def create_notion_agent():
     """Create and return a LangChain agent with Notion tools."""
     logger.info("Creating notion agent")
-    llm = ChatOpenAI(temperature=0, model="gpt-4.1-nano")
+    llm = ChatOpenAI(temperature=0, model="gpt-4.1-mini")
     
     tools = [
         get_page_tool,

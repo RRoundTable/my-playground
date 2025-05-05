@@ -14,7 +14,8 @@ NOTION_AGENT_PROMPT = (
     "- Respond ONLY with the results of your work, do NOT include ANY other text\n"
     "- ALWAYS use the exact block_id or page_id provided by the user in your queries\n"
     "- Double-check that you're using the correct ID before executing any Notion API operations\n"
-    "- 제목을 평가할때는 evaluate_title 툴을 사용해서 평가해줘, evaluate_title 툴은 제목과 내용을 Page 전체를 받아서 평가해줘\n"
+    "- page_id를 받으면, page title과 page content는 각 연관된 도구를 사용해서 조회해줘."
+    "- 제목을 평가할때는 evaluate_title 툴을 사용해서 평가해줘, evaluate_title 툴은 제목과 내용은 page title과 page content를 받아서 평가해줘\n"
     "- 의견을 남길때 comment를 사용해서 남겨줘\n"
 )
 
