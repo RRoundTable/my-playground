@@ -17,98 +17,9 @@ from langchain_core.tools import tool
 import requests
 from src.prompts import create_notion_agent_prompt
 from langgraph.prebuilt import create_react_agent
+from src.clients.notion_client import NotionAPIClient, NotionAPIError
 
 load_dotenv()
-
-class NotionAPIError(Exception):
-    """Custom exception for Notion API errors."""
-    def __init__(self, message: str, response: Optional[requests.Response] = None):
-        super().__init__(message)
-        self.response = response
-
-class NotionAPIClient:
-    """Client for interacting with the Notion API."""
-    
-    def __init__(self):
-        self.base_url = "https://api.notion.com/v1"
-        self.headers = {
-            "Authorization": f"Bearer {os.getenv('NOTION_TOKEN')}",
-            "Notion-Version": "2022-06-28",
-            "Content-Type": "application/json"
-        }
-    
-    def _handle_response(self, response: requests.Response) -> Any:
-        """Handle API response and raise appropriate exceptions."""
-        try:
-            response.raise_for_status()
-            return response.json()
-        except requests.exceptions.RequestException as e:
-            error_detail = str(e)
-            if hasattr(e.response, 'json'):
-                error_detail += f" - {e.response.json()}"
-            raise NotionAPIError(error_detail, e.response)
-    
-    def _paginated_request(self, url: str, params: Optional[Dict] = None) -> List[Dict]:
-        """Make a paginated request to the Notion API."""
-        results = []
-        has_more = True
-        start_cursor = None
-        
-        while has_more:
-            if start_cursor:
-                params = params or {}
-                params["start_cursor"] = start_cursor
-            
-            response = requests.get(url, headers=self.headers, params=params)
-            data = self._handle_response(response)
-            
-            results.extend(data["results"])
-            has_more = data["has_more"]
-            start_cursor = data.get("next_cursor")
-        
-        return results
-    
-    def get_page(self, page_id: str) -> Dict:
-        """Get a Notion page by ID."""
-        response = requests.get(
-            f"{self.base_url}/pages/{page_id}",
-            headers=self.headers
-        )
-        return self._handle_response(response)
-    
-    def get_page_blocks(self, page_id: str) -> List[Dict]:
-        """Get all blocks from a Notion page."""
-        return self._paginated_request(
-            f"{self.base_url}/blocks/{page_id}/children"
-        )
-    
-    def get_comments(self, block_id: str = None) -> List[Dict]:
-        """Get comments from a block or page.
-        
-        For page comments, we first get the page's blocks and then fetch comments for each block.
-        """
-        return self._paginated_request(
-            f"{self.base_url}/comments",
-            params={"block_id": block_id}
-        )
-    
-    def insert_comment(self, text: str, block_id: Optional[str] = None, page_id: Optional[str] = None) -> Dict:
-        """Insert a comment into a block or page."""
-        if not block_id and not page_id:
-            raise ValueError("Either block_id or page_id must be provided")
-            
-        parent = {"block_id": block_id} if block_id else {"page_id": page_id}
-        payload = {
-            "parent": parent,
-            "rich_text": [{"text": {"content": text}}]
-        }
-        
-        response = requests.post(
-            f"{self.base_url}/comments",
-            headers=self.headers,
-            json=payload
-        )
-        return self._handle_response(response)
 
 # Initialize the API client
 notion_client = NotionAPIClient()
@@ -126,6 +37,16 @@ class NotionPageCommentInput(BaseModel):
     """Input for Notion page comment operations."""
     page_id: str = Field(..., description="The ID of the Notion page to comment on")
     text: str = Field(..., description="The text content of the comment")
+
+class NotionPagePropertyInput(BaseModel):
+    """Input for Notion page property operations."""
+    page_id: str = Field(..., description="The ID of the Notion page")
+    property_id: str = Field(..., description="The ID of the property to get")
+
+class NotionUpdatePagePropertiesInput(BaseModel):
+    """Input for updating Notion page properties."""
+    page_id: str = Field(..., description="The ID of the Notion page")
+    properties: Dict = Field(..., description="Dictionary of properties to update")
 
 def get_notion_headers():
     """Get Notion API headers."""
@@ -264,6 +185,25 @@ def insert_page_comment_tool(tool_input: NotionPageCommentInput) -> Dict:
     except ValueError as e:
         raise Exception(f"Invalid input: {str(e)}")
 
+
+@tool("update_notion_page_properties")
+def update_page_properties_tool(tool_input: NotionUpdatePagePropertiesInput) -> Dict:
+    """Update properties of a Notion page.
+    
+    Args:
+        tool_input (NotionUpdatePagePropertiesInput): Input containing page_id and properties
+        
+    Returns:
+        Dict: The updated page data from Notion API
+    """
+    try:
+        return notion_client.update_page_properties(
+            page_id=tool_input.page_id,
+            properties=tool_input.properties
+        )
+    except NotionAPIError as e:
+        raise Exception(f"Failed to update page properties: {str(e)}")
+
 def create_notion_agent():
     """Create and return a LangChain agent with Notion tools."""
     llm = ChatOpenAI(temperature=0, model="gpt-4.1-nano")
@@ -275,7 +215,8 @@ def create_notion_agent():
         get_block_comments_tool,
         insert_comment_tool,
         get_page_title_tool,
-        insert_page_comment_tool
+        insert_page_comment_tool,
+        update_page_properties_tool
     ]
     
     prompt = create_notion_agent_prompt()
@@ -299,9 +240,8 @@ if __name__ == "__main__":
     
     # 다양한 테스트 쿼리 준비
     test_queries = [
-        "Get the title of page with id 1e7ff0df284780d0973bf7d70305a2f4",
-        "너는 누구야",
-        # "Get all blocks from the page with id 1e7ff0df284780d0973bf7d70305a2f4",
+        "Get the title of page with id 1e9ff0df28478038a184fe3371797f96",
+        "Get all blocks from the page with id 1e9ff0df28478038a184fe3371797f96",
     ]
     
     # 각 쿼리 실행 및 결과 출력
