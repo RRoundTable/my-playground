@@ -41,6 +41,8 @@ services:
     environment:
       - PHOENIX_WORKING_DIR=/mnt/data
       - PHOENIX_PORT=6006
+      - PHOENIX_ENABLE_AUTH=true
+      - PHOENIX_SECRET=${PHOENIX_SECRET}
     volumes:
       - phoenix_data:/mnt/data   # PHOENIX_WORKING_DIR
     labels:
