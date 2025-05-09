@@ -47,10 +47,18 @@ services:
       - phoenix_data:/mnt/data   # PHOENIX_WORKING_DIR
     labels:
       - traefik.enable=true
+      
+      # HTTP 서비스 설정
       - traefik.http.routers.phoenix.rule=Host(`phoenix.${DOMAIN}`)
       - traefik.http.services.phoenix.loadbalancer.server.port=6006
       - traefik.http.routers.phoenix.entrypoints=websecure
       - traefik.http.routers.phoenix.tls=true
+      
+      # gRPC 서비스를 위한 TCP 라우터 설정
+      - traefik.tcp.routers.phoenix-grpc.rule=HostSNI(`phoenix-grpc.${DOMAIN}`)
+      - traefik.tcp.routers.phoenix-grpc.entrypoints=grpcsecure
+      - traefik.tcp.routers.phoenix-grpc.tls=true
+      - traefik.tcp.services.phoenix-grpc.loadbalancer.server.port=4317
 
     networks:
       - ingress
