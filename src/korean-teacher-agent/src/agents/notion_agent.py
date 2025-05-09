@@ -4,22 +4,22 @@ Notion Agent using LangChain and LangGraph
 This agent provides tools to interact with Notion API using LangChain and LangGraph.
 """
 
-from typing import Dict, List, Optional, Type, Any
+from typing import Dict, List, Optional, Type, Any, Annotated, Sequence, TypedDict
 import os
 import logging
+import json
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
-from langchain.tools import BaseTool
-from langchain.agents import AgentExecutor, create_openai_functions_agent
 from langchain_openai import ChatOpenAI
-from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage, BaseMessage
 from langchain_core.tools import tool
+from langchain_core.runnables import RunnableConfig
 import requests
 from src.prompts import create_notion_agent_prompt
-from langgraph.prebuilt import create_react_agent
 from src.clients.notion_client import NotionAPIClient, NotionAPIError
 from src.agents.title_agent import evaluate_title_tool
+from langgraph.graph import StateGraph, END
+from langgraph.graph.message import add_messages
 
 load_dotenv()
 
@@ -56,6 +56,11 @@ class NotionUpdatePagePropertiesInput(BaseModel):
     """Input for updating Notion page properties."""
     page_id: str = Field(..., description="The ID of the Notion page")
     properties: Dict = Field(..., description="Dictionary of properties to update")
+
+# Define the state type for our ReAct Agent
+class AgentState(TypedDict):
+    """The state of the notion agent."""
+    messages: Annotated[Sequence[BaseMessage], add_messages]
 
 def get_notion_headers():
     """Get Notion API headers."""
@@ -252,41 +257,172 @@ def update_page_properties_tool(tool_input: NotionUpdatePagePropertiesInput) -> 
         logger.error(f"Failed to update page properties: {str(e)}")
         raise Exception(f"Failed to update page properties: {str(e)}")
 
+# Define our list of tools
+tools = [
+    get_page_tool,
+    get_page_paragraph_text_blocks_tool,
+    get_page_comment_content_blocks_tool,
+    get_block_comments_tool,
+    insert_comment_tool,
+    get_page_title_tool,
+    insert_page_comment_tool,
+    update_page_properties_tool,
+    evaluate_title_tool
+]
+
+# Create a mapping of tool names to tools for easier access
+tools_by_name = {tool.name: tool for tool in tools}
+
+# Define the node for handling tool calls
+def tool_node(state: AgentState) -> Dict:
+    """Execute tool calls from the AI's last message."""
+    logger.info("Executing tool node")
+    outputs = []
+    # Get the last message which should be from the AI with tool calls
+    last_message = state["messages"][-1]
+    
+    # Process each tool call
+    for tool_call in last_message.tool_calls:
+        logger.info(f"Processing tool call: {tool_call['name']}")
+        tool_name = tool_call["name"]
+        tool_args = tool_call["args"]
+        tool_id = tool_call["id"]
+        
+        # Get the tool by name and invoke it
+        try:
+            result = tools_by_name[tool_name].invoke(tool_args)
+            outputs.append(
+                ToolMessage(
+                    content=json.dumps(result) if not isinstance(result, str) else result,
+                    name=tool_name,
+                    tool_call_id=tool_id
+                )
+            )
+            logger.info(f"Tool {tool_name} executed successfully")
+        except Exception as e:
+            logger.error(f"Error executing tool {tool_name}: {str(e)}")
+            outputs.append(
+                ToolMessage(
+                    content=f"Error: {str(e)}",
+                    name=tool_name,
+                    tool_call_id=tool_id
+                )
+            )
+    
+    return {"messages": outputs}
+
+# Define the node that calls the model
+def call_model(state: AgentState, config: RunnableConfig):
+    """Call the LLM to process the current conversation state."""
+    logger.info("Calling LLM model")
+    
+    # Create the LLM
+    llm = ChatOpenAI(temperature=0, model="gpt-4.1-nano")
+    model_with_tools = llm.bind_tools(tools)
+    
+    # Get the system prompt as a string
+    system_prompt_text = create_notion_agent_prompt()
+    
+    # Create a system message with the prompt
+    messages = [SystemMessage(content=system_prompt_text)]
+    
+    # Add conversation history
+    messages.extend(state["messages"])
+    
+    # Invoke the model
+    response = model_with_tools.invoke(messages, config)
+    logger.info("Model response received")
+    
+    # Return the model's response
+    return {"messages": [response]}
+
+# Define the conditional edge function
+def should_continue(state: AgentState) -> str:
+    """Determine whether to continue with tool execution or end the conversation."""
+    logger.info("Checking if we should continue")
+    
+    # Get the last message
+    last_message = state["messages"][-1]
+    
+    # If the last message has tool calls, continue to tools node
+    if hasattr(last_message, "tool_calls") and last_message.tool_calls:
+        logger.info("Tool calls found, continuing to tools node")
+        return "continue"
+    
+    # If no tool calls, end the conversation
+    logger.info("No tool calls found, ending the conversation")
+    return "end"
 
 def create_notion_agent():
-    """Create and return a LangChain agent with Notion tools."""
+    """Create and return a LangGraph-based ReAct agent."""
     logger.info("Creating notion agent")
-    llm = ChatOpenAI(temperature=0, model="gpt-4.1-mini")
     
-    tools = [
-        get_page_tool,
-        get_page_paragraph_text_blocks_tool,
-        get_page_comment_content_blocks_tool,
-        get_block_comments_tool,
-        insert_comment_tool,
-        get_page_title_tool,
-        insert_page_comment_tool,
-        update_page_properties_tool,
-        evaluate_title_tool
-    ]
+    # Define the agent graph
+    workflow = StateGraph(AgentState)
     
-    prompt = create_notion_agent_prompt()
+    # Add nodes
+    workflow.add_node("agent", call_model)
+    workflow.add_node("tools", tool_node)
+    
+    # Set the entry point
+    workflow.set_entry_point("agent")
+    
+    # Add conditional edges
+    workflow.add_conditional_edges(
+        "agent",
+        should_continue,
+        {
+            "continue": "tools",
+            "end": END
+        }
+    )
+    
+    # Add edge from tools back to agent
+    workflow.add_edge("tools", "agent")
+    
+    # Compile the graph
+    agent = workflow.compile()
     
     logger.info("Notion agent created successfully")
-    return create_react_agent(model=llm, tools=tools, prompt=prompt, name="notion_agent")
+    return agent
 
 def run_notion_agent(query: str, history: list | None = None):
+    """Run the notion agent with a query and optional history."""
     history = history or []
     logger.info(f"Running notion agent with query: {query}")
+    
+    # Create the agent
     agent = create_notion_agent()
-    result = agent.invoke({"messages": [HumanMessage(content=query)] + history})
-    import pprint
-    pprint.pprint(result, indent=4)
+    
+    # Convert history to BaseMessage objects if needed
+    if history and not isinstance(history[0], BaseMessage):
+        history_messages = []
+        for msg in history:
+            if isinstance(msg, tuple) and len(msg) == 2:
+                role, content = msg
+                if role == "user" or role == "human":
+                    history_messages.append(HumanMessage(content=content))
+                elif role == "assistant" or role == "ai":
+                    history_messages.append(AIMessage(content=content))
+            elif isinstance(msg, dict) and "role" in msg and "content" in msg:
+                if msg["role"] == "user" or msg["role"] == "human":
+                    history_messages.append(HumanMessage(content=msg["content"]))
+                elif msg["role"] == "assistant" or msg["role"] == "ai":
+                    history_messages.append(AIMessage(content=msg["content"]))
+        history = history_messages
+    
+    # Prepare the initial message state
+    initial_messages = history + [HumanMessage(content=query)]
+    
+    # Invoke the agent
+    result = agent.invoke({"messages": initial_messages})
+    
+    # Extract and return the last message content
     logger.info("Notion agent execution completed")
     return result["messages"][-1].content
-# Create the Notion agent instance
-notion_agent = create_notion_agent()
 
+# Create the Notion agent instance (for API use)
+notion_agent = create_notion_agent()
 
 # Example usage
 if __name__ == "__main__":
