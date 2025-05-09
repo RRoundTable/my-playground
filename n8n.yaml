@@ -77,6 +77,8 @@ services:
   litestream:
     image: litestream/litestream
     container_name: litestream
+    labels:
+      - traefik.enable=false
     environment:
       LITESTREAM_ACCESS_KEY_ID: ${N8N_EXTERNAL_STORAGE_S3_ACCESS_KEY}
       LITESTREAM_SECRET_ACCESS_KEY: ${N8N_EXTERNAL_STORAGE_S3_ACCESS_SECRET}

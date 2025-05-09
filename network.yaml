@@ -9,7 +9,7 @@ volumes:
 
 services:
   traefik:
-    image: traefik:v3.1.2
+    image: traefik:latest
     container_name: traefik
     labels:
       - traefik.enable=true
@@ -29,6 +29,9 @@ services:
       - --entryPoints.websecure.address=:443
       - --entryPoints.web.http.redirections.entryPoint.to=websecure
       - --entryPoints.web.http.redirections.entryPoint.scheme=https
+
+      # Ignore network containers by default
+      - --providers.docker.constraints=Label(`traefik.enable`, `true`)
 
       # Set up LetsEncrypt
       - --certificatesresolvers.myresolver.acme.tlschallenge=true
@@ -89,7 +92,12 @@ services:
     image: favonia/cloudflare-ddns:latest
     container_name: cloudflare-ddns
     # This bypasses network isolation and makes IPv6 easier (optional; see below)
-    network_mode: host
+    # Using network mode: host causes the port missing error in Traefik, using networks instead
+    # network_mode: host
+    networks:
+      - ingress
+    labels:
+      - traefik.enable=false
     # Make the container filesystem read-only (optional but recommended)
     read_only: true
     # Drop all Linux capabilities (optional but recommended)

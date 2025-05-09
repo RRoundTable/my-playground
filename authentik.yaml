@@ -88,6 +88,8 @@ services:
     image: ghcr.io/goauthentik/server:2024.8.3
     container_name: authentik-worker
     command: worker
+    labels:
+      - traefik.enable=false
     environment:
       AUTHENTIK_REDIS__HOST: authentik-mq
       AUTHENTIK_REDIS__DB: 1
