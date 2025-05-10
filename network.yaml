@@ -27,6 +27,7 @@ services:
       # Configure entrypoint
       - --entryPoints.web.address=:80
       - --entryPoints.websecure.address=:443
+      - --entryPoints.grpcsecure.address=:50051
       - --entryPoints.web.http.redirections.entryPoint.to=websecure
       - --entryPoints.web.http.redirections.entryPoint.scheme=https
 
@@ -57,6 +58,8 @@ services:
       - 80:80
       # The HTTPS port
       - 443:443
+      # The gRPC port
+      - 50051:50051
       # The traefik dashboard port
       - 8080:8080
     volumes:
