@@ -9,7 +9,6 @@ import os
 import logging
 import json
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage, BaseMessage
 from langchain_core.tools import tool
@@ -55,30 +54,6 @@ tracer_provider = register(
 
 # Initialize the API client
 notion_client = NotionAPIClient()
-
-class NotionPageInput(BaseModel):
-    """Input for Notion page operations."""
-    page_id: str = Field(..., description="The ID of the Notion page")
-
-class NotionCommentInput(BaseModel):
-    """Input for Notion comment operations."""
-    block_id: str = Field(..., description="The ID of the Notion block to comment on")
-    text: str = Field(..., description="The text content of the comment")
-
-class NotionPageCommentInput(BaseModel):
-    """Input for Notion page comment operations."""
-    page_id: str = Field(..., description="The ID of the Notion page to comment on")
-    text: str = Field(..., description="The text content of the comment")
-
-class NotionPagePropertyInput(BaseModel):
-    """Input for Notion page property operations."""
-    page_id: str = Field(..., description="The ID of the Notion page")
-    property_id: str = Field(..., description="The ID of the property to get")
-
-class NotionUpdatePagePropertiesInput(BaseModel):
-    """Input for updating Notion page properties."""
-    page_id: str = Field(..., description="The ID of the Notion page")
-    properties: Dict = Field(..., description="Dictionary of properties to update")
 
 # Define the state type for our ReAct Agent
 class AgentState(TypedDict):
@@ -175,21 +150,22 @@ def get_block_comments_tool(block_id: str) -> List[Dict]:
         raise Exception(f"Failed to fetch comments for block {block_id}: {str(e)}")
 
 @tool("insert_notion_comment")
-def insert_comment_tool(tool_input: NotionCommentInput) -> Dict:
+def insert_comment_tool(block_id: str, text: str) -> Dict:
     """Insert a comment into a Notion block.
     
     Args:
-        tool_input (NotionCommentInput): Input containing block_id and text
+        block_id (str): The ID of the Notion block to comment on
+        text (str): The text content of the comment
         
     Returns:
         Dict: The created comment data from Notion API
     """
-    logger.info(f"Tool used: insert_notion_comment for block_id: {tool_input.block_id}")
-    logger.info(f"Tool input: text length: {len(tool_input.text)}")
+    logger.info(f"Tool used: insert_notion_comment for block_id: {block_id}")
+    logger.info(f"Tool input: text length: {len(text)}")
     try:
         result = notion_client.insert_comment(
-            text=tool_input.text,
-            block_id=tool_input.block_id
+            text=text,
+            block_id=block_id
         )
         logger.info(f"Tool output: insert_notion_comment successfully created comment")
         return result
@@ -231,21 +207,22 @@ def get_page_title_tool(page_id: str) -> str:
         raise Exception(f"Failed to fetch page title for {page_id}: {str(e)}")
 
 @tool("insert_notion_page_comment")
-def insert_page_comment_tool(tool_input: NotionPageCommentInput) -> Dict:
+def insert_page_comment_tool(page_id: str, text: str) -> Dict:
     """Insert a comment into a Notion page.
     
     Args:
-        tool_input (NotionPageCommentInput): Input containing page_id and text
+        page_id (str): The ID of the Notion page to comment on
+        text (str): The text content of the comment
         
     Returns:
         Dict: The created comment data from Notion API
     """
-    logger.info(f"Tool used: insert_notion_page_comment for page_id: {tool_input.page_id}")
-    logger.info(f"Tool input: text length: {len(tool_input.text)}")
+    logger.info(f"Tool used: insert_notion_page_comment for page_id: {page_id}")
+    logger.info(f"Tool input: text length: {len(text)}")
     try:
         result = notion_client.insert_comment(
-            text=tool_input.text,
-            page_id=tool_input.page_id
+            text=text,
+            page_id=page_id
         )
         logger.info(f"Tool output: insert_notion_page_comment successfully created comment")
         return result
@@ -256,23 +233,23 @@ def insert_page_comment_tool(tool_input: NotionPageCommentInput) -> Dict:
         logger.error(f"Invalid input: {str(e)}")
         raise Exception(f"Invalid input: {str(e)}")
 
-
 @tool("update_notion_page_properties")
-def update_page_properties_tool(tool_input: NotionUpdatePagePropertiesInput) -> Dict:
+def update_page_properties_tool(page_id: str, properties: Dict) -> Dict:
     """Update properties of a Notion page.
     
     Args:
-        tool_input (NotionUpdatePagePropertiesInput): Input containing page_id and properties
+        page_id (str): The ID of the Notion page
+        properties (Dict): Dictionary of properties to update
         
     Returns:
         Dict: The updated page data from Notion API
     """
-    logger.info(f"Tool used: update_notion_page_properties for page_id: {tool_input.page_id}")
-    logger.info(f"Tool input: properties keys: {list(tool_input.properties.keys())}")
+    logger.info(f"Tool used: update_notion_page_properties for page_id: {page_id}")
+    logger.info(f"Tool input: properties keys: {list(properties.keys())}")
     try:
         result = notion_client.update_page_properties(
-            page_id=tool_input.page_id,
-            properties=tool_input.properties
+            page_id=page_id,
+            properties=properties
         )
         logger.info(f"Tool output: update_notion_page_properties successfully updated properties")
         return result
@@ -468,7 +445,7 @@ if __name__ == "__main__":
     
     # 다양한 테스트 쿼리 준비
     test_queries = [
-        "page with id 1e9ff0df28478038a184fe3371797f96에 title을 평가한 후 평가내용을 댓글로 남겨줘",
+        "page id 1e9ff0df28478038a184fe3371797f96에 title을 평가한 후 평가내용을 노션 댓글로 남겨줘",
         # "Get all blocks from the page with id 1e9ff0df28478038a184fe3371797f96",
     ]
     
