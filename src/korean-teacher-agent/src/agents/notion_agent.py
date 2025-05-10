@@ -282,7 +282,6 @@ def update_page_properties_tool(tool_input: NotionUpdatePagePropertiesInput) -> 
 
 # Define our list of tools
 tools = [
-    get_page_tool,
     get_page_paragraph_text_blocks_tool,
     get_page_comment_content_blocks_tool,
     get_block_comments_tool,
@@ -446,9 +445,6 @@ def run_notion_agent(query: str, history: list | None = None):
     
     # Prepare the initial message state
     initial_messages = history + [HumanMessage(content=query)]
-    
-    # Get system prompt for tracing
-    system_prompt_text = prompt_manager.get_prompt("korean-youtube-planner")
     
     
     # Invoke the agent
