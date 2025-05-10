@@ -4,15 +4,13 @@ Title Agent using LangChain and LangGraph
 This agent evaluates YouTube video titles for Korean language learning content.
 """
 
-from typing import Dict, List, Optional, Union
-from langchain_core.messages import HumanMessage, AIMessage
+from typing import Dict, List, Optional, Union      
 from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage
 from langchain_core.tools import tool
-from langgraph.prebuilt import create_react_agent
 from dotenv import load_dotenv
 import logging
-from src.prompts import create_title_evaluation_prompt, create_title_agent_prompt
-from pydantic import BaseModel
+from src.prompts import prompt_manager
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -35,43 +33,36 @@ def evaluate_title_tool(message: str) -> str:
         str: Detailed evaluation in Korean
     """
     logger.info(f"Evaluating title with message: {message}...")
-    llm = ChatOpenAI(model="gpt-4.1-nano", temperature=0.7)
-    prompt = create_title_evaluation_prompt()
-    
+    prompt = prompt_manager.get_prompt("korean-youtube-title-evaluation-prompt")
+
+    llm = ChatOpenAI(model="gpt-4.1-nano")
     # Format the prompt with title and content
-    formatted_prompt = prompt.format_prompt(
-       input=message,
-       chat_history=[],
-       agent_scratchpad=[]
-    )
+    
     logger.debug(f"Formatted prompt created for title evaluation")
     
     # Get evaluation from LLM
     logger.info("Invoking LLM for title evaluation")
-    response = llm.invoke(formatted_prompt.to_messages())
+    prompt = prompt.format().messages
+    prompt.append(HumanMessage(content=message))
+    response = llm.invoke(prompt)
     logger.info("Received evaluation response from LLM")
     logger.info(f"Evaluation response: {response.content}")
     return response.content
 
-def create_title_agent():
-    """Create and return a React-based title evaluation agent.
-    
-    Returns:
-        Agent: The compiled title evaluation agent
-    """
-    logger.info("Creating title evaluation agent")
-    llm = ChatOpenAI(temperature=0, model="gpt-4.1-nano")
-    
-    tools = [evaluate_title_tool]
-    
-    prompt = create_title_agent_prompt()
-    logger.debug("Title agent prompt created")
 
-    agent = create_react_agent(
-        model=llm,
-        tools=tools,
-        prompt=prompt,
-        name="title_agent"
-    )
-    logger.info("Title agent created successfully")
-    return agent
+# Test script
+if __name__ == "__main__":
+    # Sample test data
+    test_title_content = """
+    제목: 한국어 초보자를 위한 10가지 기초 표현
+    내용: 안녕하세요, 인사하기, 감사합니다, 죄송합니다 등의 기본 표현을 배우고 발음 연습을 합니다.
+    실제 한국인들이 일상에서 자주 사용하는 표현들을 예문과 함께 설명합니다.
+    """
+    
+    # Run the tool with test data
+    print("테스트 실행 중...")
+    evaluation_result = evaluate_title_tool(test_title_content)
+    print("\n평가 결과:")
+    print(evaluation_result)
+
+
