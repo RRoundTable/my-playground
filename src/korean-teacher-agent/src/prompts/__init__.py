@@ -8,10 +8,11 @@ from .title_agent_prompts import (
     create_title_evaluation_prompt,
     create_title_agent_prompt,
 )
-from .supervisor_prompts import create_supervisor_prompt
+
+from .prompt_manager import prompt_manager
 __all__ = [
     'create_notion_agent_prompt',
     'create_title_evaluation_prompt',
     'create_title_agent_prompt',
-    'create_supervisor_prompt',
+    'prompt_manager',
 ] 
