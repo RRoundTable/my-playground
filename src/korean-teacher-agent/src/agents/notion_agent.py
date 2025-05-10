@@ -373,11 +373,19 @@ def tool_node(state: AgentState) -> Dict:
             
             with tracer.start_as_current_span(f"tool_execution_{tool_name}") as tool_span:
                 tool_span.set_attribute("tool_name", tool_name)
-                tool_span.set_attribute("tool_args", str(tool_args))
+                # Use our trace_prompt utility to capture the tool arguments as prompt variables
+                trace_prompt(
+                    tool_span, 
+                    f"Executing tool: {tool_name}",
+                    variables=tool_args if isinstance(tool_args, dict) else {"args": str(tool_args)}
+                )
                 
                 # Get the tool by name and invoke it
                 try:
                     result = tools_by_name[tool_name].invoke(tool_args)
+                    # Use trace_prompt to capture the response
+                    trace_prompt(tool_span, f"Tool {tool_name} execution result", response=result)
+                    
                     outputs.append(
                         ToolMessage(
                             content=json.dumps(result) if not isinstance(result, str) else result,
@@ -389,6 +397,11 @@ def tool_node(state: AgentState) -> Dict:
                     tool_span.set_attribute("success", True)
                 except Exception as e:
                     logger.error(f"Error executing tool {tool_name}: {str(e)}")
+                    tool_span.set_attribute("success", False)
+                    tool_span.set_attribute("error", str(e))
+                    # Use trace_prompt to capture the error
+                    trace_prompt(tool_span, f"Tool {tool_name} execution error", response=str(e))
+                    
                     outputs.append(
                         ToolMessage(
                             content=f"Error: {str(e)}",
@@ -396,10 +409,52 @@ def tool_node(state: AgentState) -> Dict:
                             tool_call_id=tool_id
                         )
                     )
-                    tool_span.set_attribute("success", False)
-                    tool_span.set_attribute("error", str(e))
         
         return {"messages": outputs}
+
+def trace_prompt(span, template, variables=None, response=None):
+    """Utility function to trace prompt templates and variables.
+    
+    Args:
+        span: The current span to add attributes to
+        template: The prompt template text
+        variables: Optional dict of variables used in the template
+        response: Optional response from the LLM
+    """
+    # Truncate template if it's too long
+    if len(template) > 1000:
+        template_text = template[:1000] + "..."
+    else:
+        template_text = template
+    
+    span.set_attribute("prompt_template", template_text)
+    
+    # Add variables as attributes if provided
+    if variables:
+        span.set_attribute("prompt_variables", str(variables))
+        # Add individual variables as separate attributes for easier filtering
+        for var_name, var_value in variables.items():
+            # Convert value to string and truncate if needed
+            if isinstance(var_value, str) and len(var_value) > 500:
+                var_value = var_value[:500] + "..."
+            var_str = str(var_value)
+            if len(var_str) > 500:
+                var_str = var_str[:500] + "..."
+            span.set_attribute(f"prompt_var_{var_name}", var_str)
+    
+    # Add response if provided
+    if response:
+        if isinstance(response, str):
+            resp_text = response
+        elif hasattr(response, "content"):
+            resp_text = response.content
+        else:
+            resp_text = str(response)
+        
+        if len(resp_text) > 1000:
+            resp_text = resp_text[:1000] + "..."
+        
+        span.set_attribute("response_content", resp_text)
 
 # Define the node that calls the model
 def call_model(state: AgentState, config: RunnableConfig):
@@ -420,11 +475,37 @@ def call_model(state: AgentState, config: RunnableConfig):
         # Add conversation history
         messages.extend(state["messages"])
         
+        # Trace prompt details using our utility function
+        trace_prompt(span, system_prompt_text)
+        
+        # Capture message count and context
         span.set_attribute("messages_count", len(messages))
+        
+        # Capture conversation context (only the last few messages for brevity)
+        recent_messages = state["messages"][-3:] if len(state["messages"]) > 3 else state["messages"]
+        for i, msg in enumerate(recent_messages):
+            span.set_attribute(f"message_{i}_role", msg.type if hasattr(msg, "type") else "unknown")
+            # Only capture content for non-sensitive messages and truncate if too long
+            if hasattr(msg, "content") and msg.content:
+                content = msg.content
+                if len(content) > 500:
+                    content = content[:500] + "..."
+                span.set_attribute(f"message_{i}_content", content)
+        
+        # Capture tool information
+        span.set_attribute("tools_count", len(tools))
+        span.set_attribute("tools", str([tool.name for tool in tools]))
         
         # Invoke the model
         response = model_with_tools.invoke(messages, config)
         logger.info("Model response received")
+        
+        # Add response content to the trace
+        if hasattr(response, "content") and response.content:
+            content = response.content
+            if len(content) > 500:
+                content = content[:500] + "..."
+            span.set_attribute("response_content", content)
         
         # Capture if the model response contains tool calls
         has_tool_calls = hasattr(response, "tool_calls") and len(response.tool_calls) > 0
@@ -528,6 +609,19 @@ def run_notion_agent(query: str, history: list | None = None):
         # Prepare the initial message state
         initial_messages = history + [HumanMessage(content=query)]
         
+        # Get system prompt for tracing
+        system_prompt_text = create_notion_agent_prompt()
+        
+        # Trace system prompt and query as variables
+        trace_prompt(
+            span, 
+            system_prompt_text, 
+            variables={
+                "query": query,
+                "history_length": len(history)
+            }
+        )
+        
         # Invoke the agent
         result = agent.invoke({"messages": initial_messages})
         
@@ -537,6 +631,9 @@ def run_notion_agent(query: str, history: list | None = None):
         final_response = result["messages"][-1].content
         span.set_attribute("response_length", len(final_response))
         span.set_attribute("success", True)
+        
+        # Add final response to the trace
+        trace_prompt(span, system_prompt_text, response=final_response)
         
         return final_response
 
