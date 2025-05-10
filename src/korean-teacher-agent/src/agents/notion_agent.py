@@ -14,10 +14,11 @@ from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage, BaseMessage
 from langchain_core.tools import tool
 from langchain_core.runnables import RunnableConfig
-import requests
-from src.prompts import create_notion_agent_prompt
+
 from src.clients.notion_client import NotionAPIClient, NotionAPIError
 from src.agents.title_agent import evaluate_title_tool
+from src.prompts import prompt_manager
+
 from langgraph.graph import StateGraph, END
 from langgraph.graph.message import add_messages
 
@@ -348,11 +349,12 @@ def call_model(state: AgentState, config: RunnableConfig):
     model_with_tools = llm.bind_tools(tools)
     
     # Get the system prompt as a string
-    system_prompt_text = create_notion_agent_prompt()
+    system_prompt = prompt_manager.get_prompt("korean-youtube-planner").format()
+    system_prompt_text = system_prompt.messages[0]["content"]
+    
     
     # Create a system message with the prompt
     messages = [SystemMessage(content=system_prompt_text)]
-    
     # Add conversation history
     messages.extend(state["messages"])
     
@@ -446,7 +448,7 @@ def run_notion_agent(query: str, history: list | None = None):
     initial_messages = history + [HumanMessage(content=query)]
     
     # Get system prompt for tracing
-    system_prompt_text = create_notion_agent_prompt()
+    system_prompt_text = prompt_manager.get_prompt("korean-youtube-planner")
     
     
     # Invoke the agent
