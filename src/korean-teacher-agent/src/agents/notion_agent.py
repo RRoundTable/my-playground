@@ -50,10 +50,39 @@ tracer_provider = register(
     auto_instrument=True
 )   
 
+# Create a short-term memory cache for storing page titles and other information
+class MemoryCache:
+    def __init__(self):
+        self.page_titles = {}  # page_id -> title
+        self.page_contents = {}  # page_id -> content
+        self.other_data = {}  # For any other data we want to cache
+    
+    def get_page_title(self, page_id):
+        return self.page_titles.get(page_id)
+    
+    def set_page_title(self, page_id, title):
+        self.page_titles[page_id] = title
+        
+    def get_page_content(self, page_id):
+        return self.page_contents.get(page_id)
+    
+    def set_page_content(self, page_id, content):
+        self.page_contents[page_id] = content
+        
+    def store_data(self, key, value):
+        self.other_data[key] = value
+        
+    def get_data(self, key):
+        return self.other_data.get(key)
+
+# Initialize the global memory cache
+memory_cache = MemoryCache()
+
 # Define the state type for our ReAct Agent
 class AgentState(TypedDict):
     """The state of the notion agent."""
     messages: Annotated[Sequence[BaseMessage], add_messages]
+    memory: dict  # Add memory to agent state
 
 # Define the node for handling tool calls
 def tool_node(state: AgentState) -> Dict:
@@ -76,6 +105,13 @@ def tool_node(state: AgentState) -> Dict:
         # Get the tool by name and invoke it
         try:
             result = tools_by_name[tool_name].invoke(tool_args)
+            
+            # Store page title in memory if applicable
+            if tool_name == 'get_page' and 'properties' in result and 'title' in result['properties']:
+                page_id = tool_args.get('page_id')
+                page_title = result['properties']['title']
+                memory_cache.set_page_title(page_id, page_title)
+                logger.info(f"Stored page title for page_id {page_id}: {page_title}")
             
             outputs.append(
                 ToolMessage(
@@ -111,6 +147,16 @@ def call_model(state: AgentState, config: RunnableConfig):
     system_prompt = prompt_manager.get_prompt("korean-youtube-planner").format()
     system_prompt_text = system_prompt.messages[0]["content"]
     
+    # Add memory context to system prompt if available
+    memory_context = ""
+    # Add page titles from memory
+    if memory_cache.page_titles:
+        memory_context += "Page titles in memory:\n"
+        for page_id, title in memory_cache.page_titles.items():
+            memory_context += f"- Page ID: {page_id}, Title: {title}\n"
+    
+    if memory_context:
+        system_prompt_text += f"\n\nMemory Context:\n{memory_context}"
     
     # Create a system message with the prompt
     messages = [SystemMessage(content=system_prompt_text)]
@@ -206,9 +252,11 @@ def run_notion_agent(query: str, history: list | None = None):
     # Prepare the initial message state
     initial_messages = history + [HumanMessage(content=query)]
     
+    # Initial state with empty memory
+    initial_state = {"messages": initial_messages, "memory": {}}
     
     # Invoke the agent
-    result = agent.invoke({"messages": initial_messages})
+    result = agent.invoke(initial_state)
     
     # Extract and return the last message content
     logger.info("Notion agent execution completed")
@@ -219,6 +267,15 @@ def run_notion_agent(query: str, history: list | None = None):
 
 # Create the Notion agent instance (for API use)
 notion_agent = create_notion_agent()
+
+# Utility functions to interact with memory cache
+def get_page_title_from_cache(page_id):
+    """Get page title from memory cache if available."""
+    return memory_cache.get_page_title(page_id)
+
+def store_page_title_in_cache(page_id, title):
+    """Store page title in memory cache for future use."""
+    memory_cache.set_page_title(page_id, title)
 
 # Example usage
 if __name__ == "__main__":
