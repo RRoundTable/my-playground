@@ -44,7 +44,31 @@ def evaluate_title_tool(message: str) -> str:
     logger.info(f"Evaluation response: {response.content}")
     return response.content
 
+@tool("evaluate_content")
+def evaluate_content_tool(content: str, title: str) -> str:
+    """Evaluate how well a content matches its title for Korean language learning videos.
+    Check if the message contains enough information
+    The message should be structured with both title and content information
+    This tool requires both elements to perform a proper evaluation
+    """
+    logger.info(f"Evaluating content with title: {title} and content: {content}...")
+    prompt = prompt_manager.get_prompt("korean-youtube-content-evaluation-prompt")
+
+    llm = ChatOpenAI(model="gpt-4.1-nano")
+    # Format the prompt with title and content  
+    logger.debug(f"Formatted prompt created for content evaluation")
+    
+    # Get evaluation from LLM
+    logger.info("Invoking LLM for content evaluation")
+    prompt = prompt.format().messages
+    prompt.append(HumanMessage(content=message))
+    response = llm.invoke(prompt)   
+    logger.info("Received evaluation response from LLM")
+    logger.info(f"Evaluation response: {response.content}")
+    return response.content 
+
+
 # Export all tools
-title_tools = [
+review_tools = [
     evaluate_title_tool,
 ] 
