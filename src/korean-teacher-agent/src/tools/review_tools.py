@@ -22,7 +22,8 @@ def evaluate_title_tool(title: str, content: str) -> str:
     This tool requires both elements to perform a proper evaluation
     
     Args:
-        message: The title and content to evaluate
+        title: The title of the YouTube video from the Notion page
+        content: The content of the YouTube video from the Notion page
         
     Returns:
         str: Detailed evaluation in Korean
