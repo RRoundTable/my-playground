@@ -8,12 +8,10 @@ from typing import Dict, List
 from langchain_core.tools import BaseTool
 
 from src.tools.notion_tools import notion_tools
-from src.tools.review_tools import review_tools
 
 # Aggregate all tools
 all_tools: List[BaseTool] = [
     *notion_tools,
-    *review_tools,
 ]
 
 # Create a mapping of tool names to tools for easier access
