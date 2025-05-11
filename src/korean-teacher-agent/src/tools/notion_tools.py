@@ -37,6 +37,7 @@ def get_base_url():
 @tool("get_notion_page")
 def get_page_tool(page_id: str) -> Dict:
     """Fetch a Notion page by its ID.
+    Used to query notion page properties.
     
     Args:
         page_id (str): The ID of the Notion page to fetch
@@ -113,7 +114,8 @@ def get_block_comments_tool(block_id: str) -> List[Dict]:
 @tool("insert_notion_comment")
 def insert_comment_tool(block_id: str, text: str) -> Dict:
     """Insert a comment into a Notion block.
-    
+    Used when leaving a comment on a specific block within a notion page.
+    For example, when leaving a review of a specific block within a notion page.
     Args:
         block_id (str): The ID of the Notion block to comment on
         text (str): The text content of the comment
@@ -170,7 +172,8 @@ def get_page_title_tool(page_id: str) -> str:
 @tool("insert_notion_page_comment")
 def insert_page_comment_tool(page_id: str, text: str) -> Dict:
     """Insert a comment into a Notion page.
-    
+    Use this when leaving a comment on the entire page. For example, when leaving a review of the page title.
+
     Args:
         page_id (str): The ID of the Notion page to comment on
         text (str): The text content of the comment
