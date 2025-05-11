@@ -11,11 +11,9 @@ import json
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage, BaseMessage
-from langchain_core.tools import tool
 from langchain_core.runnables import RunnableConfig
 
-from src.clients.notion_client import NotionAPIClient, NotionAPIError
-from src.agents.title_agent import evaluate_title_tool
+from src.tools import all_tools, tools_by_name
 from src.prompts import prompt_manager
 
 from langgraph.graph import StateGraph, END
@@ -52,225 +50,10 @@ tracer_provider = register(
     auto_instrument=True
 )   
 
-# Initialize the API client
-notion_client = NotionAPIClient()
-
 # Define the state type for our ReAct Agent
 class AgentState(TypedDict):
     """The state of the notion agent."""
     messages: Annotated[Sequence[BaseMessage], add_messages]
-
-def get_notion_headers():
-    """Get Notion API headers."""
-    notion_token = os.getenv("NOTION_TOKEN")
-    return {
-        "Authorization": f"Bearer {notion_token}",
-        "Notion-Version": "2022-06-28",
-        "Content-Type": "application/json"
-    }
-
-def get_base_url():
-    """Get Notion API base URL."""
-    return "https://api.notion.com/v1"
-
-@tool("get_notion_page")
-def get_page_tool(page_id: str) -> Dict:
-    """Fetch a Notion page by its ID.
-    
-    Args:
-        page_id (str): The ID of the Notion page to fetch
-        
-    Returns:
-        Dict: The page data from Notion API
-    """
-    logger.info(f"Tool used: get_notion_page with page_id: {page_id}")
-    try:
-        result = notion_client.get_page(page_id)
-        logger.info(f"Tool output: get_notion_page returned data of length: {len(str(result))}")
-        return result
-    except NotionAPIError as e:
-        logger.error(f"Failed to fetch page {page_id}: {str(e)}")
-        raise Exception(f"Failed to fetch page {page_id}: {str(e)}")
-
-@tool("get_notion_page_paragraph_text_blocks")
-def get_page_paragraph_text_blocks_tool(page_id: str) -> List[Dict]:
-    """Fetch all blocks from a Notion page.
-    
-    Args:
-        page_id (str): The ID of the Notion page to fetch blocks from
-        
-    Returns:
-        List[Dict]: List of blocks from the Notion page
-    """
-    logger.info(f"Tool used: get_notion_page_paragraph_text_blocks with page_id: {page_id}")
-    try:
-        result = notion_client.get_paragraph_text_blocks(page_id)
-        logger.info(f"Tool output: get_notion_page_paragraph_text_blocks returned {len(result)} blocks")
-        return result
-    except NotionAPIError as e:
-        logger.error(f"Failed to fetch blocks for page {page_id}: {str(e)}")
-        raise Exception(f"Failed to fetch blocks for page {page_id}: {str(e)}")
-
-@tool("get_notion_page_comment_content_blocks")
-def get_page_comment_content_blocks_tool(page_id: str) -> List[Dict]:
-    """Fetch all comments from a Notion page.
-    
-    Args:
-        page_id (str): The ID of the Notion page to fetch comments from
-        
-    Returns:
-        List[Dict]: List of comments from the Notion page
-    """
-    logger.info(f"Tool used: get_notion_page_comment_content_blocks with page_id: {page_id}")
-    try:
-        result = notion_client.get_comment_content_blocks(block_id=page_id)
-        logger.info(f"Tool output: get_notion_page_comment_content_blocks returned {len(result)} comments")
-        return result
-    except NotionAPIError as e:
-        logger.error(f"Failed to fetch comments for page {page_id}: {str(e)}")
-        raise Exception(f"Failed to fetch comments for page {page_id}: {str(e)}")
-
-@tool("get_notion_block_comments")
-def get_block_comments_tool(block_id: str) -> List[Dict]:
-    """Fetch all comments from a specific Notion block.
-    
-    Args:
-        block_id (str): The ID of the Notion block to fetch comments from
-        
-    Returns:
-        List[Dict]: List of comments from the Notion block
-    """
-    logger.info(f"Tool used: get_notion_block_comments with block_id: {block_id}")
-    try:
-        result = notion_client.get_comments(block_id=block_id)
-        logger.info(f"Tool output: get_notion_block_comments returned {len(result)} comments")
-        return result
-    except NotionAPIError as e:
-        logger.error(f"Failed to fetch comments for block {block_id}: {str(e)}")
-        raise Exception(f"Failed to fetch comments for block {block_id}: {str(e)}")
-
-@tool("insert_notion_comment")
-def insert_comment_tool(block_id: str, text: str) -> Dict:
-    """Insert a comment into a Notion block.
-    
-    Args:
-        block_id (str): The ID of the Notion block to comment on
-        text (str): The text content of the comment
-        
-    Returns:
-        Dict: The created comment data from Notion API
-    """
-    logger.info(f"Tool used: insert_notion_comment for block_id: {block_id}")
-    logger.info(f"Tool input: text length: {len(text)}")
-    try:
-        result = notion_client.insert_comment(
-            text=text,
-            block_id=block_id
-        )
-        logger.info(f"Tool output: insert_notion_comment successfully created comment")
-        return result
-    except NotionAPIError as e:
-        logger.error(f"Failed to insert comment: {str(e)}")
-        raise Exception(f"Failed to insert comment: {str(e)}")
-    except ValueError as e:
-        logger.error(f"Invalid input: {str(e)}")
-        raise Exception(f"Invalid input: {str(e)}")
-
-@tool("get_notion_page_title")
-def get_page_title_tool(page_id: str) -> str:
-    """Get the title of a Notion page.
-    
-    Args:
-        page_id (str): The ID of the Notion page
-        
-    Returns:
-        str: The title of the Notion page
-    """
-    logger.info(f"Tool used: get_notion_page_title with page_id: {page_id}")
-    try:
-        page_data = notion_client.get_page(page_id)
-        title_property = page_data.get("properties", {}).get("Title", {})
-        if not title_property:
-            logger.error(f"Title property not found in page {page_id}")
-            raise Exception("Title property not found in page")
-            
-        title_text = title_property.get("title", [])
-        if not title_text:
-            logger.info("Tool output: get_notion_page_title returned empty title")
-            return ""
-        result = title_text[0].get("plain_text", "")
-        logger.info(f"Tool output: get_notion_page_title returned title: '{result}'")
-        return result
-        
-    except NotionAPIError as e:
-        logger.error(f"Failed to fetch page title for {page_id}: {str(e)}")
-        raise Exception(f"Failed to fetch page title for {page_id}: {str(e)}")
-
-@tool("insert_notion_page_comment")
-def insert_page_comment_tool(page_id: str, text: str) -> Dict:
-    """Insert a comment into a Notion page.
-    
-    Args:
-        page_id (str): The ID of the Notion page to comment on
-        text (str): The text content of the comment
-        
-    Returns:
-        Dict: The created comment data from Notion API
-    """
-    logger.info(f"Tool used: insert_notion_page_comment for page_id: {page_id}")
-    logger.info(f"Tool input: text length: {len(text)}")
-    try:
-        result = notion_client.insert_comment(
-            text=text,
-            page_id=page_id
-        )
-        logger.info(f"Tool output: insert_notion_page_comment successfully created comment")
-        return result
-    except NotionAPIError as e:
-        logger.error(f"Failed to insert page comment: {str(e)}")
-        raise Exception(f"Failed to insert page comment: {str(e)}")
-    except ValueError as e:
-        logger.error(f"Invalid input: {str(e)}")
-        raise Exception(f"Invalid input: {str(e)}")
-
-@tool("update_notion_page_properties")
-def update_page_properties_tool(page_id: str, properties: Dict) -> Dict:
-    """Update properties of a Notion page.
-    
-    Args:
-        page_id (str): The ID of the Notion page
-        properties (Dict): Dictionary of properties to update
-        
-    Returns:
-        Dict: The updated page data from Notion API
-    """
-    logger.info(f"Tool used: update_notion_page_properties for page_id: {page_id}")
-    logger.info(f"Tool input: properties keys: {list(properties.keys())}")
-    try:
-        result = notion_client.update_page_properties(
-            page_id=page_id,
-            properties=properties
-        )
-        logger.info(f"Tool output: update_notion_page_properties successfully updated properties")
-        return result
-    except NotionAPIError as e:
-        logger.error(f"Failed to update page properties: {str(e)}")
-        raise Exception(f"Failed to update page properties: {str(e)}")
-
-# Define our list of tools
-tools = [
-    get_page_paragraph_text_blocks_tool,
-    get_page_comment_content_blocks_tool,
-    get_block_comments_tool,
-    insert_comment_tool,
-    get_page_title_tool,
-    insert_page_comment_tool,
-    update_page_properties_tool,
-    evaluate_title_tool
-]
-
-# Create a mapping of tool names to tools for easier access
-tools_by_name = {tool.name: tool for tool in tools}
 
 # Define the node for handling tool calls
 def tool_node(state: AgentState) -> Dict:
@@ -322,7 +105,7 @@ def call_model(state: AgentState, config: RunnableConfig):
     
     # Create the LLM
     llm = ChatOpenAI(model="gpt-4.1-nano")
-    model_with_tools = llm.bind_tools(tools)
+    model_with_tools = llm.bind_tools(all_tools)
     
     # Get the system prompt as a string
     system_prompt = prompt_manager.get_prompt("korean-youtube-planner").format()
