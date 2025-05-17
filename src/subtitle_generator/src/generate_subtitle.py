@@ -8,13 +8,14 @@ from typing import List, Tuple, Dict, Optional
 
 from pydub.silence import split_on_silence
 
-def transcribe_with_whisper(audio_path: str, model_name: str = "base") -> Dict:
+def transcribe_with_whisper(audio_path: str, model_name: str = "base", language: Optional[str] = None) -> Dict:
     """
     Transcribe the given audio file using OpenAI's Whisper model.
     
     Args:
         audio_path: Path to the audio file
         model_name: Whisper model size (tiny, base, small, medium, large)
+        language: Language spoken in the audio (e.g., 'en', 'ko'). None for auto-detect.
     
     Returns:
         Dictionary containing transcription results with timestamps
@@ -26,7 +27,8 @@ def transcribe_with_whisper(audio_path: str, model_name: str = "base") -> Dict:
     result = model.transcribe(
         audio_path,
         verbose=True,
-        word_timestamps=True
+        word_timestamps=True,
+        language=language if language and language.strip() else None
     )
     
     return result
@@ -63,7 +65,7 @@ def main():
     parser = argparse.ArgumentParser(description='Generate SRT subtitles using OpenAI Whisper')
     parser.add_argument('input', help='Path to the audio file')
     parser.add_argument('--output', help='Path to save the SRT subtitle file', default=None)
-    parser.add_argument('--model', help='Whisper model size', choices=['tiny', 'base', 'small', 'medium', 'large', 'turbo'], default='turbo')
+    parser.add_argument('--model', help='Whisper model size', choices=['tiny', 'base', 'small', 'medium', 'large'], default='base')
     parser.add_argument('--language', help='Language code (e.g., en, ko)', default=None)
     
     args = parser.parse_args()
@@ -73,7 +75,7 @@ def main():
         args.output = os.path.splitext(args.input)[0] + '.srt'
     
     # Transcribe audio using Whisper
-    result = transcribe_with_whisper(args.input, args.model)
+    result = transcribe_with_whisper(args.input, args.model, args.language)
     
     # Generate SRT file
     generate_srt(result, args.output)

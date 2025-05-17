@@ -1,0 +1,34 @@
+version: '3.8'
+
+networks:
+  ingress:
+    name: ingress
+    external: true
+
+services:
+
+  subtitle-generator:
+    image: ghcr.io/nocoders/subtitle-generator:latest
+    build:
+      context: ./src/subtitle_generator
+      dockerfile: Dockerfile
+    container_name: subtitle-generator
+    restart: always
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.subtitle-generator.rule=Host(`subtitle-generator.${DOMAIN}`)
+      - traefik.http.services.subtitle-generator.loadbalancer.server.port=7860
+      - traefik.http.routers.subtitle-generator.entrypoints=websecure
+      - traefik.http.routers.subtitle-generator.tls=true
+      - traefik.http.routers.subtitle-generator.middlewares=authentik-proxy@docker
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+    volumes:
+      - ./src/subtitle_generator/:/app
+      - subtitle-generator-data:/data
+    working_dir: /app
+    networks:
+      - ingress
+
+volumes:
+  subtitle-generator-data: {}

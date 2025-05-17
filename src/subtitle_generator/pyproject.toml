@@ -1,20 +1,24 @@
-[project]
+[tool.poetry]
 name = "subtitle-generator"
 version = "0.1.0"
-description = ""
-authors = [
-    {name = "roundtable"}
-]
-readme = "README.md"
-requires-python = ">=3.12"
-dependencies = [
-    "openai-whisper (>=20240930,<20240931)",
-    "pydub (>=0.25.1,<0.26.0)",
-    "torch (>=2.7.0,<3.0.0)",
-    "numpy (>=2.2.5,<3.0.0)"
-]
+description = "Application to generate and translate subtitles"
+authors = ["Your Name <your.email@example.com>"] # 이 부분은 원하시면 수정하세요
+license = "MIT" # 선택 사항
 
+[tool.poetry.dependencies]
+python = "^3.12,<4.0"
+python-dotenv = "^1.0.0"
+gradio = "^5.29.1"
+openai = "^1.12.0"
+srt = "^3.5.3"
+openai-whisper = "^20231117"
+pydub = "^0.25.1"
+torch = ">=1.13.1" # Whisper는 특정 torch 버전이 필요할 수 있습니다. 필요시 조정하세요.
+numpy = "*" # 보통 torch나 whisper의 의존성으로 설치되지만 명시하는 것이 좋습니다.
+
+[tool.poetry.group.dev.dependencies] # 선택 사항: 개발 도구용
+# pytest = "^7.0"
 
 [build-system]
-requires = ["poetry-core>=2.0.0,<3.0.0"]
+requires = ["poetry-core>=1.0.0"]
 build-backend = "poetry.core.masonry.api"
