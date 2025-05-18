@@ -178,7 +178,6 @@ def evaluate_title_node(state: PageEvaluationWorkflowState) -> Dict:
     body_context = get_first_text_from_section("body", parsed_sections)
 
     logger.info(f"Context for title evaluation: Thumbnail='{thumbnail_context[:50]}...', Intro='{intro_context[:50]}...', Body='{body_context[:50]}...'")
-    import pdb; pdb.set_trace()
     try:
         system_prompt_template = prompt_manager.get_prompt("korean-youtube-title-evaluation-prompt")
         try:
