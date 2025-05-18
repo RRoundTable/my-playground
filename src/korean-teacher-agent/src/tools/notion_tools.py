@@ -111,8 +111,8 @@ def get_block_comments_tool(block_id: str) -> List[Dict]:
         logger.error(f"Failed to fetch comments for block {block_id}: {str(e)}")
         raise Exception(f"Failed to fetch comments for block {block_id}: {str(e)}")
 
-@tool("insert_notion_comment")
-def insert_comment_tool(block_id: str, text: str) -> Dict:
+@tool("insert_notion_block_comment")
+def insert_block_comment_tool(block_id: str, text: str) -> Dict:
     """Insert a comment into a Notion block.
     Used when leaving a comment on a specific block within a notion page.
     For example, when leaving a review of a specific block within a notion page.
@@ -220,6 +220,144 @@ def update_page_properties_tool(page_id: str, properties: Dict) -> Dict:
     except NotionAPIError as e:
         logger.error(f"Failed to update page properties: {str(e)}")
         raise Exception(f"Failed to update page properties: {str(e)}")
+    
+@tool("get_notion_page_blocks")
+def get_page_blocks_tool(page_id: str) -> List[Dict]:
+    """Get all blocks from a Notion page.
+    
+    Args:
+        page_id (str): The ID of the Notion page
+
+    Returns:
+        List[Dict]: List of blocks from the Notion page
+    """
+    logger.info(f"Tool used: get_notion_page_blocks with page_id: {page_id}")
+    try:
+        result = notion_client.get_page_blocks(page_id)
+        logger.info(f"Tool output: get_notion_page_blocks returned {len(result)} blocks")
+        return result
+    except NotionAPIError as e:
+        logger.error(f"Failed to fetch blocks for page {page_id}: {str(e)}")
+        raise Exception(f"Failed to fetch blocks for page {page_id}: {str(e)}")
+    
+def _extract_plain_text_from_raw_block(block: Dict) -> str:
+    """Extracts plain text content from a raw Notion block dictionary."""
+    block_type = block.get("type")
+    if not block_type or block_type not in block:
+        return ""
+
+    rich_text_list = []
+    # Common block types that store rich_text directly under their type key
+    if block_type in [
+        "paragraph", "heading_1", "heading_2", "heading_3", 
+        "quote", "callout", "bulleted_list_item", 
+        "numbered_list_item", "to_do", "toggle"
+    ]:
+        rich_text_list = block[block_type].get("rich_text", [])
+    # Add checks for other block types if they store text differently
+    # For example, table cells might be block[block_type]['cells'][row_idx][col_idx]['rich_text'] - more complex
+
+    plain_text_parts = []
+    for item in rich_text_list:
+        if item.get("type") == "text":
+            plain_text_parts.append(item.get("plain_text", ""))
+    
+    return "".join(plain_text_parts).strip()
+
+@tool("get_notion_page_blocks")
+def get_notion_page_blocks_tool(page_id: str) -> List[Dict]:
+    """
+    Fetches all raw blocks from a Notion page.
+    
+    Args:
+        page_id (str): The ID of the Notion page to fetch blocks from
+        
+    Returns:
+        List[Dict]: List of raw block data from the Notion page
+    """
+    logger.info(f"Tool used: get_notion_page_blocks_tool with page_id: {page_id}")
+    try:
+        result = notion_client.get_page_blocks(page_id) 
+        logger.info(f"Tool output: get_notion_page_blocks_tool returned {len(result)} raw blocks")
+        return result
+    except NotionAPIError as e:
+        logger.error(f"Failed to fetch raw blocks for page {page_id}: {str(e)}")
+        raise Exception(f"Failed to fetch raw blocks for page {page_id}: {str(e)}")
+    except Exception as e:
+        logger.error(f"Unexpected error in get_notion_page_blocks_tool for page {page_id}: {str(e)}", exc_info=True)
+        raise Exception(f"Unexpected error fetching raw blocks for page {page_id}: {str(e)}")
+
+@tool("parse_notion_page_into_sections_tool")
+def parse_notion_page_into_sections_tool(page_id: str) -> Dict[str, List[Dict]]:
+    """
+    Fetches all blocks from a Notion page, extracts their ID, type, and plain text,
+    and then parses them into logical sections (title, thumbnail, intro, body, other)
+    based on heading_1 blocks and their content.
+    """
+    logger.info(f"Tool used: parse_notion_page_into_sections for page_id: {page_id}")
+    try:
+        raw_blocks = notion_client.get_page_blocks(page_id)
+        if not raw_blocks:
+            logger.info(f"No blocks found for page {page_id}.")
+            return {"title": [], "thumbnail": [], "intro": [], "body": [], "other": []}
+
+        processed_blocks = []
+        for block_data in raw_blocks:
+            plain_text = _extract_plain_text_from_raw_block(block_data)
+            processed_blocks.append({
+                "id": block_data.get("id"),
+                "type": block_data.get("type"),
+                "plain_text": plain_text
+            })
+
+        sections: Dict[str, List[Dict]] = {
+            "title": [],
+            "thumbnail": [],
+            "intro": [],
+            "body": [],
+            "other": []
+        }
+        current_section_key = "other" # Default section for blocks before any recognized heading
+
+        for p_block in processed_blocks:
+            is_heading_and_processed = False
+            if p_block["type"] == "heading_1":
+                heading_text = p_block["plain_text"].lower()
+                new_section_key = current_section_key # By default, keep current section
+
+                if "제목" in heading_text:
+                    new_section_key = "title"
+                elif "썸네일" in heading_text:
+                    new_section_key = "thumbnail"
+                elif "인트로" in heading_text or "초반 30초" in heading_text : # Check if "인트로" or "초반 30초" is in heading_text
+                    new_section_key = "intro"
+                elif "본문" in heading_text:
+                    new_section_key = "body"
+                else:
+                    new_section_key = "other" # Unrecognized heading_1 defaults to 'other' section.
+                
+                current_section_key = new_section_key
+                sections[current_section_key].append(p_block)
+                is_heading_and_processed = True
+            
+            if not is_heading_and_processed:
+                # Add non-heading blocks to the current section defined by the last heading encountered
+                # Or if it's a block before any recognized heading, it goes into "other"
+                sections[current_section_key].append(p_block)
+            
+        # Filter out empty sections from the final output for cleanliness, though initialized lists are fine
+        # final_sections = {k: v for k, v in sections.items() if v} 
+        # Keeping all sections, even if empty, for consistent structure.
+
+        logger.info(f"Tool output: parse_notion_page_into_sections returned sections: {list(sections.keys())}")
+        return sections
+
+    except NotionAPIError as e:
+        logger.error(f"Notion API error in parse_notion_page_into_sections for {page_id}: {str(e)}")
+        raise Exception(f"Notion API error parsing page sections for {page_id}: {str(e)}")
+    except Exception as e:
+        logger.error(f"Unexpected error in parse_notion_page_into_sections for {page_id}: {str(e)}", exc_info=True)
+        raise Exception(f"Unexpected error parsing page sections for {page_id}: {str(e)}")
 
 # Export all tools
 notion_tools = [
@@ -227,8 +365,11 @@ notion_tools = [
     get_page_paragraph_text_blocks_tool,
     get_page_comment_content_blocks_tool,
     get_block_comments_tool,
-    insert_comment_tool,
+    insert_block_comment_tool,
     get_page_title_tool,
     insert_page_comment_tool,
     update_page_properties_tool,
+    get_page_blocks_tool,
+    get_notion_page_blocks_tool,
+    parse_notion_page_into_sections_tool,
 ] 
