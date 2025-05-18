@@ -79,6 +79,13 @@ class ReviewOutput(BaseModel):
 # Initialize LLM
 llm = ChatOpenAI(model="gpt-4.1-nano").with_structured_output(ReviewOutput)
 
+def get_first_text_from_section(section_name: str, sections_data: Dict) -> str:
+    blocks_in_section = sections_data.get(section_name, [])
+    for block in blocks_in_section:
+        if block.get("type") == "paragraph" and block.get("plain_text", "").strip():
+            return block.get("plain_text", "").strip()
+    return "내용 없음"
+
 
 # Define the node for getting page information
 def get_page_info_node(state: PageEvaluationWorkflowState) -> Dict:
@@ -163,15 +170,6 @@ def evaluate_title_node(state: PageEvaluationWorkflowState) -> Dict:
     title_plan_to_evaluate = title_paragraph_blocks[0].get("plain_text", "")
     title_plan_block_id = title_paragraph_blocks[0].get("id")
     logger.info(f"Title plan text for direct evaluation: '{title_plan_to_evaluate[:100]}...' from block {title_plan_block_id}")
-
-    # Helper to get first non-empty text from a section (paragraph or quote)
-    def get_first_text_from_section(section_name: str, sections_data: Dict) -> str:
-        blocks_in_section = sections_data.get(section_name, [])
-        for block in blocks_in_section:
-            if block.get("type") in ["paragraph"] and block.get("plain_text", "").strip():
-                return block.get("plain_text", "").strip()
-        return "내용 없음"
-
     # Gather context from other sections
     thumbnail_context = get_first_text_from_section("thumbnail", parsed_sections)
     intro_context = get_first_text_from_section("intro", parsed_sections)
@@ -240,30 +238,41 @@ def evaluate_thumbnail_node(state: PageEvaluationWorkflowState) -> Dict:
         return {"error_message": "Parsed sections not found for thumbnail evaluation."}
 
     thumbnail_section_blocks = parsed_sections.get("thumbnail", [])
-    quote_info = _get_first_quote_text_and_id(thumbnail_section_blocks)
+    thumbnail_text = get_first_text_from_section("thumbnail", parsed_sections)
 
-    if not quote_info:
+    if not thumbnail_text:
         comment_text = "썸네일 기획 내용이 없습니다."
         logger.info(f"No descriptive quote found in thumbnail section. Page comment: '{comment_text}'")
         try:
-            tools_by_name["insert_notion_page_comment"].invoke({"page_id": page_id, "comment_text": comment_text})
+            # Ensure the tool name and parameters match its definition
+            tools_by_name["insert_notion_page_comment"].invoke({"page_id": page_id, "text": comment_text}) 
             return {"thumbnail_evaluation_comment": comment_text, "error_message": None}
         except Exception as e:
             logger.error(f"Error adding page comment for missing thumbnail description: {str(e)}")
             return {"error_message": f"Error adding page comment for thumbnail: {str(e)}"}
     
-    thumbnail_plan_text, quote_block_id = quote_info
-    logger.info(f"Thumbnail plan text found for evaluation: '{thumbnail_plan_text[:100]}...' from block {quote_block_id}")
+    logger.info(f"Thumbnail plan text found for evaluation: '{thumbnail_text[:100]}...'")
     
     try:
-        evaluation_prompt_content = (
-            f"다음은 Notion 페이지의 '썸네일' 섹션에 대한 설명/기획입니다: \n\n\"{thumbnail_plan_text}\"\n\n"
-            f"이 썸네일 기획이 유튜브 영상의 클릭율을 높이는 데 도움이 될지 평가해주세요. 평가는 한국어로 작성해주세요.\n"
+        system_prompt_template = prompt_manager.get_prompt("korean-youtube-title-evaluation-prompt")
+        try:
+            system_prompt_content = system_prompt_template.format()
+        except AttributeError:
+            system_prompt_content = str(system_prompt_template)
+
+        human_message_content = (
+            f"평가할 썸네일 기획: \n\"{thumbnail_text}\"\n\n"
+            f"이 썸네일 기획이 유튜브 영상의 클릭율을 높이는 데 도움이 될지 종합적으로 평가하고, \n"
             f"평가 상태를 'approved' 또는 'change_requested'로 지정해주세요."
         )
+
+        messages = [
+            SystemMessage(content=system_prompt_content.messages[0]["content"] if hasattr(system_prompt_content, 'messages') and system_prompt_content.messages else system_prompt_content),
+            HumanMessage(content=human_message_content),
+        ]
         
         # LLM now returns a ReviewOutput object directly
-        structured_response: ReviewOutput = llm.invoke([HumanMessage(content=evaluation_prompt_content)])
+        structured_response: ReviewOutput = llm.invoke(messages)
         
         evaluation_comment = structured_response.comment
         review_status = structured_response.status
@@ -274,8 +283,8 @@ def evaluate_thumbnail_node(state: PageEvaluationWorkflowState) -> Dict:
 
         logger.info(f"Thumbnail plan evaluation by LLM: Comment='{evaluation_comment}', Status='{review_status}'")
 
-        tools_by_name["insert_notion_block_comment"].invoke({"block_id": quote_block_id, "text": f"평가: {evaluation_comment}\n상태: {review_status}"})
-        logger.info(f"Block comment added to thumbnail plan block {quote_block_id}")
+        tools_by_name["insert_notion_block_comment"].invoke({"block_id": thumbnail_section_blocks[0].get("id"), "text": f"평가: {evaluation_comment}\n상태: {review_status}"})
+        logger.info(f"Block comment added to thumbnail plan block {thumbnail_section_blocks[0].get('id')}")
         return {"thumbnail_evaluation_comment": evaluation_comment, "thumbnail_review_status": review_status, "error_message": None}
     except Exception as e:
         logger.error(f"Error during thumbnail plan evaluation or commenting: {str(e)}", exc_info=True)
@@ -303,38 +312,55 @@ def evaluate_intro_node(state: PageEvaluationWorkflowState) -> Dict:
         logger.warning("No parsed sections found. Cannot evaluate intro section.")
         return {"error_message": "Parsed sections not found for intro evaluation."}
 
-    intro_section_blocks = parsed_sections.get("intro", []) # Get blocks for 'intro' section
-    quote_info = _get_first_quote_text_and_id(intro_section_blocks)
+    intro_section_blocks = parsed_sections.get("intro", [])
+    intro_plan_text = get_first_text_from_section("intro", parsed_sections)
 
-    if not quote_info:
+    if intro_plan_text == "내용 없음" or not intro_plan_text.strip():
         # Check if there was at least a heading for the intro section
         intro_heading_exists = any(block.get("type") == "heading_1" and ("인트로" in block.get("plain_text", "").lower() or "초반 30초" in block.get("plain_text", "").lower()) for block in intro_section_blocks)
         
         if intro_heading_exists:
-            comment_text = "인트로 섹션은 있으나, 세부 기획 내용(인용구 블록)이 없습니다."
+            comment_text = "인트로 섹션은 있으나, 세부 기획 내용(문단 블록)이 없습니다."
         else:
             comment_text = "인트로 섹션 자체가 없거나, 인식할 수 있는 인트로 관련 내용(예: '인트로' 또는 '초반 30초' 제목)을 찾지 못했습니다."
         
-        logger.info(f"No descriptive quote found in intro section. Page comment: '{comment_text}'")
+        logger.info(f"No descriptive paragraph found in intro section. Page comment: '{comment_text}'")
         try:
-            tools_by_name["insert_notion_page_comment"].invoke({"page_id": page_id, "comment_text": comment_text})
+            tools_by_name["insert_notion_page_comment"].invoke({"page_id": page_id, "text": comment_text})
             return {"intro_evaluation_comment": comment_text, "error_message": None}
         except Exception as e:
             logger.error(f"Error adding page comment for missing intro description: {str(e)}")
             return {"error_message": f"Error adding page comment for intro: {str(e)}"}
 
-    intro_plan_text, quote_block_id = quote_info
-    logger.info(f"Intro plan text found for evaluation: '{intro_plan_text[:100]}...' from block {quote_block_id}")
+    # Get block_id from the first block in the section if blocks exist
+    intro_plan_block_id = None
+    if intro_section_blocks:
+        intro_plan_block_id = intro_section_blocks[0].get("id")
+        logger.info(f"Intro plan text found for evaluation: '{intro_plan_text[:100]}...' from section. Comment will be on block_id: {intro_plan_block_id}")
+    else: # Should not happen if intro_plan_text was found, but as a safeguard
+        logger.warning(f"Intro plan text found ('{intro_plan_text[:100]}...') but no blocks in intro_section_blocks. Cannot comment on block.")
+        # Decide if we should still proceed with evaluation but not comment, or return error
+        # For now, proceed but commenting will fail if block_id is None
 
     try:
-        evaluation_prompt_content = (
-            f"다음은 Notion 페이지의 '인트로' 섹션에 대한 설명/기획입니다: \n\n\"{intro_plan_text}\"\n\n"
-            f"이 인트로 기획이 유튜브 영상의 초반 이탈율을 줄이는 데 도움이 될지 평가해주세요. 평가는 한국어로 작성해주세요.\n"
+        system_prompt_template = prompt_manager.get_prompt("korean-youtube-title-evaluation-prompt")
+        try:
+            system_prompt_content = system_prompt_template.format()
+        except AttributeError:
+            system_prompt_content = str(system_prompt_template)
+
+        human_message_content = (
+            f"평가할 인트로 기획: \n\"{intro_plan_text}\"\n\n"
+            f"이 인트로 기획이 유튜브 영상의 초반 이탈율을 줄이는 데 도움이 될지 평가해주세요. \n"
             f"평가 상태를 'approved' 또는 'change_requested'로 지정해주세요."
         )
 
-        # LLM now returns a ReviewOutput object directly
-        structured_response: ReviewOutput = llm.invoke([HumanMessage(content=evaluation_prompt_content)])
+        messages = [
+            SystemMessage(content=system_prompt_content.messages[0]["content"] if hasattr(system_prompt_content, 'messages') and system_prompt_content.messages else system_prompt_content),
+            HumanMessage(content=human_message_content),
+        ]
+        
+        structured_response: ReviewOutput = llm.invoke(messages)
         
         evaluation_comment = structured_response.comment
         review_status = structured_response.status
@@ -345,8 +371,12 @@ def evaluate_intro_node(state: PageEvaluationWorkflowState) -> Dict:
 
         logger.info(f"Intro plan evaluation by LLM: Comment='{evaluation_comment}', Status='{review_status}'")
 
-        tools_by_name["insert_notion_block_comment"].invoke({"block_id": quote_block_id, "text": f"평가: {evaluation_comment}\n상태: {review_status}"})
-        logger.info(f"Block comment added to intro plan block {quote_block_id}")
+        if intro_plan_block_id: # Only comment if we have a block_id
+            tools_by_name["insert_notion_block_comment"].invoke({"block_id": intro_plan_block_id, "text": f"평가: {evaluation_comment}\n상태: {review_status}"})
+            logger.info(f"Block comment added to intro plan block {intro_plan_block_id}")
+        else:
+            logger.warning(f"No block ID for intro section, skipping block comment. Page ID: {page_id}")
+
         return {"intro_evaluation_comment": evaluation_comment, "intro_review_status": review_status, "error_message": None}
     except Exception as e:
         logger.error(f"Error during intro plan evaluation or commenting: {str(e)}", exc_info=True)
@@ -372,9 +402,9 @@ def evaluate_body_node(state: PageEvaluationWorkflowState) -> Dict:
         return {"error_message": "Parsed sections not found for body evaluation."}
 
     body_section_blocks = parsed_sections.get("body", []) # Get blocks for 'body' section
-    quote_info = _get_first_quote_text_and_id(body_section_blocks)
+    body_plan_text = get_first_text_from_section("body", parsed_sections)
 
-    if not quote_info:
+    if body_plan_text == "내용 없음" or not body_plan_text.strip():
         body_heading_exists = any(block.get("type") == "heading_1" and "본문" in block.get("plain_text", "").lower() for block in body_section_blocks)
         if body_heading_exists:
             comment_text = "본문 섹션은 있으나, 세부 기획 내용(인용구 블록)이 없습니다."
@@ -383,24 +413,34 @@ def evaluate_body_node(state: PageEvaluationWorkflowState) -> Dict:
 
         logger.info(f"No descriptive quote found in body section. Page comment: '{comment_text}'")
         try:
-            tools_by_name["insert_notion_page_comment"].invoke({"page_id": page_id, "comment_text": comment_text})
+            tools_by_name["insert_notion_page_comment"].invoke({"page_id": page_id, "text": comment_text})
             return {"body_evaluation_comment": comment_text, "error_message": None}
         except Exception as e:
             logger.error(f"Error adding page comment for missing body description: {str(e)}")
             return {"error_message": f"Error adding page comment for body: {str(e)}"}
 
-    body_plan_text, quote_block_id = quote_info
-    logger.info(f"Body plan text found for evaluation: '{body_plan_text[:100]}...' from block {quote_block_id}")
+    logger.info(f"Body plan text found for evaluation: '{body_plan_text[:100]}...'")
 
     try:
-        evaluation_prompt_content = (
-            f"다음은 Notion 페이지의 '본문' 섹션에 대한 설명/기획입니다: \n\n\"{body_plan_text}\"\n\n"
-            f"이 본문 기획이 유튜브 영상의 평균 시청 지속 시간을 높이는 데 도움이 될지 평가해주세요. 평가는 한국어로 작성해주세요.\n"
+        system_prompt_template = prompt_manager.get_prompt("korean-youtube-title-evaluation-prompt")
+        try:
+            system_prompt_content = system_prompt_template.format()
+        except AttributeError:
+            system_prompt_content = str(system_prompt_template)
+        
+        human_message_content = (
+            f"평가할 본문 기획: \n\"{body_plan_text}\"\n\n"
+            f"이 본문 기획이 유튜브 영상의 평균 시청 지속 시간을 높이는 데 도움이 될지 평가해주세요. \n"
             f"평가 상태를 'approved' 또는 'change_requested'로 지정해주세요."
         )
         
+        messages = [
+            SystemMessage(content=system_prompt_content.messages[0]["content"] if hasattr(system_prompt_content, 'messages') and system_prompt_content.messages else system_prompt_content),
+            HumanMessage(content=human_message_content),
+        ]
+        
         # LLM now returns a ReviewOutput object directly
-        structured_response: ReviewOutput = llm.invoke([HumanMessage(content=evaluation_prompt_content)])
+        structured_response: ReviewOutput = llm.invoke(messages)
         
         evaluation_comment = structured_response.comment
         review_status = structured_response.status
@@ -411,8 +451,8 @@ def evaluate_body_node(state: PageEvaluationWorkflowState) -> Dict:
 
         logger.info(f"Body plan evaluation by LLM: Comment='{evaluation_comment}', Status='{review_status}'")
 
-        tools_by_name["insert_notion_block_comment"].invoke({"block_id": quote_block_id, "text": f"평가: {evaluation_comment}\n상태: {review_status}"})
-        logger.info(f"Block comment added to body plan block {quote_block_id}")
+        tools_by_name["insert_notion_block_comment"].invoke({"block_id": body_section_blocks[0].get("id"), "text": f"평가: {evaluation_comment}\n상태: {review_status}"})
+        logger.info(f"Block comment added to body plan block {body_section_blocks[0].get('id')}")
         return {"body_evaluation_comment": evaluation_comment, "body_review_status": review_status, "error_message": None}
     except Exception as e:
         logger.error(f"Error during body plan evaluation or commenting: {str(e)}", exc_info=True)
