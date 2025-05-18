@@ -314,36 +314,56 @@ def parse_notion_page_into_sections_tool(page_id: str) -> Dict[str, List[Dict]]:
             "title": [],
             "thumbnail": [],
             "intro": [],
-            "body": [],
+            "body": {"main_content": [], "1분_3분": [], "3분_6분": [], "6분_이후": [], "other_h2_content": []}, # Initialize body with sub-sections
             "other": []
         }
         current_section_key = "other" # Default section for blocks before any recognized heading
+        current_body_subsection_key = "main_content" # Default for content directly under body H1
 
         for p_block in processed_blocks:
             is_heading_and_processed = False
             if p_block["type"] == "heading_1":
                 heading_text = p_block["plain_text"].lower()
-                new_section_key = current_section_key # By default, keep current section
+                current_body_subsection_key = "main_content" # Reset body subsection when H1 changes
 
                 if "제목" in heading_text:
-                    new_section_key = "title"
+                    current_section_key = "title"
                 elif "썸네일" in heading_text:
-                    new_section_key = "thumbnail"
-                elif "인트로" in heading_text or "초반 30초" in heading_text : # Check if "인트로" or "초반 30초" is in heading_text
-                    new_section_key = "intro"
+                    current_section_key = "thumbnail"
+                elif "인트로" in heading_text or "초반 30초" in heading_text :
+                    current_section_key = "intro"
                 elif "본문" in heading_text:
-                    new_section_key = "body"
+                    current_section_key = "body"
                 else:
-                    new_section_key = "other" # Unrecognized heading_1 defaults to 'other' section.
+                    current_section_key = "other"
                 
-                current_section_key = new_section_key
-                sections[current_section_key].append(p_block)
+                # Add H1 block to its section (or main_content of body)
+                if current_section_key == "body":
+                    sections[current_section_key][current_body_subsection_key].append(p_block)
+                else:
+                    sections[current_section_key].append(p_block)
                 is_heading_and_processed = True
             
+            elif p_block["type"] == "heading_2" and current_section_key == "body":
+                heading_text = p_block["plain_text"].lower()
+                if "1분" in heading_text and "3분" in heading_text:
+                    current_body_subsection_key = "1분_3분"
+                elif "3분" in heading_text and "6분" in heading_text:
+                    current_body_subsection_key = "3분_6분"
+                elif "6분" in heading_text and "이후" in heading_text:
+                    current_body_subsection_key = "6분_이후"
+                else:
+                    current_body_subsection_key = "other_h2_content" # For other H2s in body
+                sections["body"][current_body_subsection_key].append(p_block)
+                is_heading_and_processed = True
+
             if not is_heading_and_processed:
-                # Add non-heading blocks to the current section defined by the last heading encountered
-                # Or if it's a block before any recognized heading, it goes into "other"
-                sections[current_section_key].append(p_block)
+                if current_section_key == "body":
+                    # Add block to the current body H2 subsection (or main_content if no H2 encountered yet)
+                    sections[current_section_key][current_body_subsection_key].append(p_block)
+                else:
+                    # Add non-heading blocks to the current main section
+                    sections[current_section_key].append(p_block)
             
         # Filter out empty sections from the final output for cleanliness, though initialized lists are fine
         # final_sections = {k: v for k, v in sections.items() if v} 
