@@ -162,10 +162,10 @@ def evaluate_title_node(state: PageEvaluationWorkflowState) -> Dict:
         try:
             # Ensure the tool name and parameters match its definition in notion_tools.py
             tools_by_name["insert_notion_page_comment"].invoke({"page_id": page_id, "text": comment_text}) 
-            return {"title_evaluation_comment": comment_text, "error_message": None}
+            return {"title_evaluation_comment": comment_text, "title_review_status": "change_requested", "error_message": None}
         except Exception as e:
             logger.error(f"Error adding page comment for missing title description: {str(e)}")
-            return {"error_message": f"Error adding page comment for title: {str(e)}"}
+            return {"error_message": f"Error adding page comment for title: {str(e)}", "title_review_status": "change_requested"}
     
     title_plan_to_evaluate = title_paragraph_blocks[0].get("plain_text", "")
     title_plan_block_id = title_paragraph_blocks[0].get("id")
@@ -240,16 +240,16 @@ def evaluate_thumbnail_node(state: PageEvaluationWorkflowState) -> Dict:
     thumbnail_section_blocks = parsed_sections.get("thumbnail", [])
     thumbnail_text = get_first_text_from_section("thumbnail", parsed_sections)
 
-    if not thumbnail_text:
+    if thumbnail_text == "내용 없음" or not thumbnail_text.strip():
         comment_text = "썸네일 기획 내용이 없습니다."
         logger.info(f"No descriptive quote found in thumbnail section. Page comment: '{comment_text}'")
         try:
             # Ensure the tool name and parameters match its definition
             tools_by_name["insert_notion_page_comment"].invoke({"page_id": page_id, "text": comment_text}) 
-            return {"thumbnail_evaluation_comment": comment_text, "error_message": None}
+            return {"thumbnail_evaluation_comment": comment_text, "thumbnail_review_status": "change_requested", "error_message": None}
         except Exception as e:
             logger.error(f"Error adding page comment for missing thumbnail description: {str(e)}")
-            return {"error_message": f"Error adding page comment for thumbnail: {str(e)}"}
+            return {"error_message": f"Error adding page comment for thumbnail: {str(e)}", "thumbnail_review_status": "change_requested"}
     
     logger.info(f"Thumbnail plan text found for evaluation: '{thumbnail_text[:100]}...'")
     
@@ -327,10 +327,10 @@ def evaluate_intro_node(state: PageEvaluationWorkflowState) -> Dict:
         logger.info(f"No descriptive paragraph found in intro section. Page comment: '{comment_text}'")
         try:
             tools_by_name["insert_notion_page_comment"].invoke({"page_id": page_id, "text": comment_text})
-            return {"intro_evaluation_comment": comment_text, "error_message": None}
+            return {"intro_evaluation_comment": comment_text, "intro_review_status": "change_requested", "error_message": None}
         except Exception as e:
             logger.error(f"Error adding page comment for missing intro description: {str(e)}")
-            return {"error_message": f"Error adding page comment for intro: {str(e)}"}
+            return {"error_message": f"Error adding page comment for intro: {str(e)}", "intro_review_status": "change_requested"}
 
     # Get block_id from the first block in the section if blocks exist
     intro_plan_block_id = None
@@ -414,10 +414,10 @@ def evaluate_body_node(state: PageEvaluationWorkflowState) -> Dict:
         logger.info(f"No descriptive quote found in body section. Page comment: '{comment_text}'")
         try:
             tools_by_name["insert_notion_page_comment"].invoke({"page_id": page_id, "text": comment_text})
-            return {"body_evaluation_comment": comment_text, "error_message": None}
+            return {"body_evaluation_comment": comment_text, "body_review_status": "change_requested", "error_message": None}
         except Exception as e:
             logger.error(f"Error adding page comment for missing body description: {str(e)}")
-            return {"error_message": f"Error adding page comment for body: {str(e)}"}
+            return {"error_message": f"Error adding page comment for body: {str(e)}", "body_review_status": "change_requested"}
 
     logger.info(f"Body plan text found for evaluation: '{body_plan_text[:100]}...'")
 
@@ -504,38 +504,40 @@ def run_page_evaluator_agent(page_id: str):
 
     final_state = None
     try:
-        for s in agent.stream(initial_state, config=config):
-            logger.info(f"Workflow step output: {s}")
-            if END in s: # Check if it's the end state
-                final_state = s[END]
-                break
-            # If streaming, the last non-END key typically holds current node's output
-            # However, for simplicity, we grab the full state at the end if END is not the only key.
-            # The final state will be available in the `agent.invoke` return or after stream completes.
-
-        # If the loop finishes without hitting END explicitly (e.g., if END is the only key in the last event)
-        # we invoke to get the final accumulated state. Or, if we want the full state after END.
-        if final_state is None:
-             # Invoke might be better here to get the full final state if stream doesn't directly give it
-            result = agent.invoke(initial_state, config=config)
-            final_state = result
-            logger.info(f"Agent invoked, final state: {final_state}")
-        else:
-            logger.info(f"Agent stream ended, final state from stream: {final_state}")
+        # Directly invoke the agent to get the final state
+        final_state = agent.invoke(initial_state, config=config)
+        logger.info(f"Agent invoked successfully. Final state: {final_state}")
 
     except Exception as e:
         logger.error(f"Error running page evaluation agent for page_id {page_id}: {str(e)}", exc_info=True)
-        return {
+        # Construct a consistent error state if invoke fails
+        final_state = {
             "page_id": page_id,
-            "error_message": f"Agent execution failed: {str(e)}",
-            "title": None, "status": None, 
-            "intro_evaluation_comment": None, 
-            "body_evaluation_comment": None
+            "title": None,
+            "status": None,
+            "parsed_sections": None,
+            "title_evaluation_comment": None,
+            "thumbnail_evaluation_comment": None,
+            "intro_evaluation_comment": None,
+            "body_evaluation_comment": None,
+            "title_review_status": None,
+            "thumbnail_review_status": None,
+            "intro_review_status": None,
+            "body_review_status": None,
+            "error_message": f"Agent execution failed: {str(e)}"
         }
 
     logger.info(f"Page evaluation agent execution completed for page_id: {page_id}")
     
-    # Construct a summary response
+    # Ensure final_state is a dictionary before constructing the summary
+    if not isinstance(final_state, dict):
+        logger.error(f"Critical error: final_state is not a dictionary. Value: {final_state}")
+        final_state = {
+            "page_id": page_id,
+            "error_message": "Critical agent error: Final state was not a dictionary."
+        }
+
+    # Construct a summary response using final_state
     response_summary = {
         "page_id": page_id,
         "title": final_state.get("title", "N/A"),
