@@ -41,7 +41,6 @@ async def create_db_and_tables_async():
     async with async_engine.begin() as conn:
         # await conn.run_sync(Base.metadata.drop_all) # 필요시 기존 테이블 삭제
         await conn.run_sync(Base.metadata.create_all)
-    print("Async database and tables created (if they didn't exist).")
 
 
 class HomeworkBase(BaseModel):
