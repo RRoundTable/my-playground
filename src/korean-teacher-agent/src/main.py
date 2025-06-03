@@ -3,8 +3,10 @@ from pydantic import BaseModel
 from typing import Dict
 import logging
 import json
+from contextlib import asynccontextmanager
 
-from src.agents.notion_agent import notion_client
+from src.agents.writing_homework_agent import wrting_homework_agent
+from src.database.homework import create_db_and_tables_async
 
 # Configure logging
 logging.basicConfig(
@@ -14,15 +16,29 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
+# lifespan 컨텍스트 매니저 정의
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # 애플리케이션 시작 시 실행될 코드
+    logger.info("애플리케이션 시작 - 데이터베이스 및 테이블 초기화...")
+    await create_db_and_tables_async() # DB 및 테이블 생성
+    logger.info("데이터베이스 및 테이블 초기화 완료.")
+    
+    yield 
+    logger.info("애플리케이션 종료 중...")
+
 app = FastAPI(
     title="Korean Teacher Agent",
     description="A dummy FastAPI application for Korean Teacher Agent",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan
 )
 
 class HealthResponse(BaseModel):
     status: str
     version: str
+
+
 
 @app.get("/")
 async def root():
@@ -35,54 +51,5 @@ async def health_check():
         "version": "1.0.0"
     }
 
-
-class NotionWebhookData(BaseModel):
-    updated_blocks: list = []
-    parent: dict = {}
-
-class NotionEntity(BaseModel):
-    id: str
-    type: str
-
-class NotionWebhookRequest(BaseModel):
-    id: str
-    timestamp: str
-    workspace_id: str
-    workspace_name: str
-    subscription_id: str
-    integration_id: str
-    type: str
-    authors: list
-    accessible_by: list = []  # Make this field optional with default empty list
-    attempt_number: int
-    entity: NotionEntity
-    data: NotionWebhookData
-
-
-@app.post("/webhook")
-async def handle_webhook(request: Request):
-    try:
-        body = await request.json()
-        webhook_data = NotionWebhookRequest(**body)
-        logger.info(f"Received Notion webhook: {webhook_data.type}")
-        logger.info(f"Entity ID: {webhook_data.entity.id}, Type: {webhook_data.entity.type}")
-        logger.info(f"Webhook data: {webhook_data.model_dump_json()}")
-        
-        if webhook_data.type == "page.properties_updated":
-            page_id = webhook_data.entity.id
-            page_data = notion_client.get_page(page_id)
-            logger.info(f"Page data: {page_data}")
-            page_properties = page_data['properties']
-            logger.info(f"Page properties: {page_properties}")
-            if "Status" in page_properties:
-                status_property = page_properties["Status"]
-                logger.info(f"Status property: {status_property}")
-                if status_property['status']['name'] == "Review requested":
-                    logger.info(f"Page property is in review")
-                    logger.info(f"Page property: {status_property}")
-        return {"status": "success"}
-    except Exception as e:
-        logger.error(f"Error processing webhook: {str(e)}")
-        return {"status": "error", "message": str(e)}
 
 
