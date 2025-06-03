@@ -7,6 +7,8 @@ networks:
 volumes:
   nocodb_data: {}
   nocodb_db: {}
+  ai-agent-sqlite:
+    external: true
 
 services:
   nocodb:
@@ -47,4 +49,5 @@ services:
       - ingress
     volumes:
       - nocodb_data:/usr/app/data
+      - ai-agent-sqlite:/user/app/ai-agent-sqlite
     restart: always

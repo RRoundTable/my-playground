@@ -27,7 +27,7 @@ services:
     volumes:
       - ./src/korean-teacher-agent/:/app
       - ai-agent-data:/data
-      - ai-agent-sqlite:/app/sqlite.db
+      - ai-agent-sqlite:/app/database
     working_dir: /app
     command: poetry run uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
     networks:
