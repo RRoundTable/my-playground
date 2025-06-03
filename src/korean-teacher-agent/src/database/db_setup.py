@@ -8,7 +8,7 @@ from sqlalchemy.orm import declarative_base
 from sqlalchemy.sql import func
 
 # --- SQLAlchemy 비동기 설정 ---
-ASYNC_DATABASE_URL = "sqlite+aiosqlite:///./homework_agent_async.db" # 비동기 드라이버 사용
+ASYNC_DATABASE_URL = "sqlite+aiosqlite:///./sqlite.db" # 비동기 드라이버 사용
 
 async_engine = create_async_engine(
     ASYNC_DATABASE_URL,
