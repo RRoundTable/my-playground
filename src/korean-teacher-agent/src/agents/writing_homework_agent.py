@@ -39,15 +39,16 @@ class AgentState(TypedDict):
 # 3. 숙제 아이디어 구상 노드용 Pydantic 모델
 class HomeworkIdea(BaseModel):
     topic: str = Field(description="숙제의 주제 (한국어)")
-    writing_type: str = Field(description="글쓰기 유형 (예: 시, 수필, 논설문, 짧은 이야기, 독후감 등) (한국어)")
+    writing_type: str = Field(description="글쓰기 유형 (예: 짧은 이야기, 후기, 일기) (한국어)")
     keywords: List[str] = Field(description="숙제 주제와 관련된 핵심 키워드 (한국어)")
 
 
-def create_korean_homework_agent(llm: BaseChatModel) -> StateGraph:
+def create_korean_homework_agent() -> StateGraph:
     """
     주어진 LLM을 사용하여 한국어 글쓰기 숙제 생성 LangGraph 에이전트를 생성하고 반환합니다.
     """
 
+    llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.7)
     # --- 노드 함수 정의 ---
     async def brainstorm_homework_idea_node(state: AgentState):
         logger.info("--- 숙제 아이디어 구상 중 ---")
@@ -77,7 +78,7 @@ def create_korean_homework_agent(llm: BaseChatModel) -> StateGraph:
     async def generate_detailed_homework_node(state: AgentState):
         logger.info("--- 상세 숙제 내용 생성 중 ---")
         if state.get("error_message"):
-            logger.warning("이전 단계에서 오류가 발생하여 상세 숙제 생성을 건너<0xEB><0x9B><0x84>니다.")
+            logger.warning("이전 단계에서 오류가 발생하여 상세 숙제 생성을 건냅니다.")
             return {}
         if not state.get("homework_idea") or not isinstance(state["homework_idea"], dict):
             logger.error("상세 숙제 생성을 위한 아이디어가 없습니다.")
@@ -90,22 +91,32 @@ def create_korean_homework_agent(llm: BaseChatModel) -> StateGraph:
 
         prompt = ChatPromptTemplate.from_messages([
             ("system",
-             "당신은 한국어 글쓰기 숙제 안내문을 작성하는 AI입니다. "
-             "주어진 주제, 글쓰기 유형, 키워드를 바탕으로 학생들에게 제시할 구체적이고 친절한 숙제 안내문을 작성해주세요. "
-             "숙제 안내문에는 다음 내용이 포함되어야 합니다:\n"
-             "1. 숙제 제목 (흥미를 유발하는 창의적인 제목)\n"
-             "2. 명확한 글쓰기 지시사항 (무엇을, 어떻게 써야 하는지)\n"
-             "3. 포함되어야 할 내용 또는 고려사항 (필요시 키워드 활용 안내 포함)\n"
-             "4. 예상 분량 (예: A4 1장 내외, 800자 이상 등)\n"
-             "5. 제출 기한 (예: 다음 주 수업 시간까지) - 날짜는 가상으로 설정\n"
-             "6. (선택적) 평가 기준 또는 팁\n"
-             "모든 내용은 한국어로 자연스럽게 작성해주세요."),
+            "당신은 한국어 글쓰기 숙제 안내문을 작성하는 AI입니다. "
+            "주어진 주제, 글쓰기 유형, 키워드를 바탕으로 학생들에게 제시할 구체적이고 친절한 숙제 안내문을 작성해주세요. "
+            "숙제 안내문에는 다음 내용이 포함되어야 합니다:\n"
+            "1. 숙제 제목 (흥미를 유발하는 창의적인 제목)\n"
+            "2. 명확한 글쓰기 지시사항 (무엇을, 어떻게 써야 하는지)\n"
+            "3. 포함되어야 할 내용 또는 고려사항 (필요시 키워드 활용 안내 포함)\n"
+            "4. 예상 분량 (5줄 이내)\n" # 안내 문구 수정
+            "모든 내용은 한국어로 자연스럽게 작성해주세요.\n" # 줄바꿈 추가
+            "예시 숙제 안내문 (학생에게 제시될 글쓰기 과제 부분):\n" # "예시:" 문구 명확화
+            "--------------------------------------------------\n"
+            "✨ 나의 특별한 생일 이야기 ✨\n\n"
+            "친구들, 안녕하세요! 오늘은 여러분의 생일에 대한 이야기를 나눠볼 거예요.\n\n"
+            "🎂 생일이 언제예요?\n"
+            "🎁 그리고 생일에 받고 싶은 선물이나 하고 싶은 것을 얘기해볼까요?\n"
+            "🎉 이미 생일이 지났다면 생일에 했던 일, 받았던 선물을 얘기해볼까요?\n\n"
+            "자유롭게 여러분의 생각이나 경험을 표현해주세요.\n"
+            "✏️ 5줄 이상으로 작성해봐요 😄\n"
+            "--------------------------------------------------"
+            ),
+
             ("human",
-             "다음 정보를 바탕으로 상세한 한국어 글쓰기 숙제 안내문을 작성해주세요:\n"
-             f"- 주제: {topic}\n"
-             f"- 글쓰기 유형: {writing_type}\n"
-             f"- 관련 키워드: {keywords_str}\n"
-             "학생들이 이해하기 쉽고 흥미를 느낄 수 있도록 작성해주세요.")
+            "다음 정보를 바탕으로 상세한 한국어 글쓰기 숙제 안내문을 작성해주세요:\n"
+            f"- 주제: {topic}\n"
+            f"- 글쓰기 유형: {writing_type}\n"
+            f"- 관련 키워드: {keywords_str}\n"
+            "학생들이 이해하기 쉽고 흥미를 느낄 수 있도록 작성해주세요. 위 시스템 메시지의 예시 스타일을 참고하여, 특히 글쓰기 과제 부분을 명확하고 친근하게 제시해주세요.")
         ])
 
         chain = prompt | llm
@@ -163,19 +174,7 @@ if __name__ == "__main__":
         if not OPENAI_API_KEY_LOADED:
             logger.error("OpenAI API 키가 로드되지 않았습니다. .env 파일을 확인하고 프로그램을 다시 시작해주세요.")
             return
-
-        llm_model_name = "gpt-4o-mini"
-        try:
-            llm_instance = ChatOpenAI(model=llm_model_name, temperature=0.7)
-            # 간단한 테스트 호출 (선택 사항, 필요시 주석 해제)
-            # await llm_instance.ainvoke("test")
-            logger.info(f"LLM 인스턴스 생성 완료 ({llm_model_name})")
-        except Exception as e:
-            logger.error(f"LLM 인스턴스 생성 중 오류 발생 ({llm_model_name}): {e}")
-            logger.error("OpenAI API 키 또는 모델 이름을 확인해주세요.")
-            return
-
-        homework_agent_app = create_korean_homework_agent(llm_instance)
+        homework_agent_app = create_korean_homework_agent()
 
         user_request = input("어떤 종류의 글쓰기 숙제를 만들까요? (예: '나의 꿈에 대한 수필 숙제', '환경 보호 논설문', '자유 주제 시 쓰기')\n> ")
 
