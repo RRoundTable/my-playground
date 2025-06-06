@@ -1,9 +1,10 @@
 import datetime
 import json
 from typing import List, Optional
+import uuid
 
 from pydantic import BaseModel, Field as PydanticField # SQLAlchemy의 Column과 구분
-from sqlalchemy import Column, Integer, String, Text, DateTime
+from sqlalchemy import Column, Integer, String, Text, DateTime, UUID
 from sqlalchemy.orm import declarative_base
 from sqlalchemy.sql import func
 from .db_setup import async_engine
@@ -14,7 +15,7 @@ Base = declarative_base()
 class Homework(Base):
     __tablename__ = "homework"
 
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    id = Column(UUID, primary_key=True, index=True, default=uuid.uuid4)
     initial_request = Column(Text, nullable=False)
     homework_topic = Column(String(255), nullable=True)
     homework_writing_type = Column(String(100), nullable=True)
@@ -38,10 +39,16 @@ class Homework(Base):
 
 # --- 데이터베이스 테이블 생성 함수 (비동기) ---
 async def create_db_and_tables_async():
+    import os
+    from pathlib import Path
+
+    # Create database directory if it doesn't exist
+    db_dir = Path("./database")
+    db_dir.mkdir(exist_ok=True)
+
     async with async_engine.begin() as conn:
         # await conn.run_sync(Base.metadata.drop_all) # 필요시 기존 테이블 삭제
         await conn.run_sync(Base.metadata.create_all)
-
 
 class HomeworkBase(BaseModel):
     initial_request: str
