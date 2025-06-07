@@ -7,9 +7,7 @@ from contextlib import asynccontextmanager
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
-from src.agents.writing_homework_agent import wrting_homework_agent
-
-from src.database.homework import create_db_and_tables_async, HomeworkResponse, Homework
+from src.database.homework import HomeworkResponse, Homework
 from src.database.db_setup import get_async_db
 from src.services.writing_homework import create_writing_homework_background_task
 from dotenv import load_dotenv
