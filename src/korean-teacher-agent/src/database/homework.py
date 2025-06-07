@@ -37,19 +37,7 @@ class Homework(Base):
         if self.homework_keywords:
             return json.loads(self.homework_keywords)
         return None
-
-# --- 데이터베이스 테이블 생성 함수 (비동기) ---
-async def create_db_and_tables_async():
-    import os
-    from pathlib import Path
-
-    # Create database directory if it doesn't exist
-    db_dir = Path("./database")
-    db_dir.mkdir(exist_ok=True)
-
-    async with async_engine.begin() as conn:
-        # await conn.run_sync(Base.metadata.drop_all) # 필요시 기존 테이블 삭제
-        await conn.run_sync(Base.metadata.create_all)
+    
 
 class HomeworkBase(BaseModel):
     initial_request: str
