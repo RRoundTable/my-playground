@@ -129,7 +129,7 @@ async def create_writing_homework(
     row_data = request_data.data.rows[0]
     
     # Check if homework entry exists
-    result = await db.execute(select(Homework).where(Homework.id == row_data.id))
+    result = await db.execute(select(Homework).where(Homework.id == row_data.id and Homework.status != "sended"))
     existing_homework = result.scalar_one_or_none()
     
     if existing_homework:
