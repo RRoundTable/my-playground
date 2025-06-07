@@ -15,7 +15,7 @@ Base = declarative_base()
 class Homework(Base):
     __tablename__ = "homework"
 
-    id = Column(UUID, primary_key=True, index=True, default=uuid.uuid4)
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     initial_request = Column(Text, nullable=False)
     homework_topic = Column(String(255), nullable=True)
     homework_writing_type = Column(String(100), nullable=True)
