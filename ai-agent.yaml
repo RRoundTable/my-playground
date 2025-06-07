@@ -7,6 +7,24 @@ networks:
 
 services:
 
+  # =================================================================
+  # 1. 마이그레이션 전용 서비스 추가
+  # =================================================================
+  ai-agent-migration:
+    build:
+      context: ./src/korean-teacher-agent
+      dockerfile: Dockerfile
+    container_name: ai-agent-migration
+    command: ["poetry", "run", "alembic", "upgrade", "head"]
+    volumes:
+      - ./src/korean-teacher-agent/:/app  # alembic.ini 등을 읽기 위해 필요
+      - ai-agent-sqlite:/app/database    # DB 파일에 접근하기 위해 필요
+    networks:
+      - ingress
+
+  # =================================================================
+  # 2. 기존 ai-agent 서비스 수정
+  # =================================================================
   ai-agent:
     image: ghcr.io/nocoders/korean-teacher-agent:latest
     build:
@@ -14,13 +32,16 @@ services:
       dockerfile: Dockerfile
     container_name: ai-agent
     restart: always
+    # 'depends_on'을 추가하여 마이그레이션이 성공해야만 앱이 실행되도록 설정
+    depends_on:
+      ai-agent-migration:
+        condition: service_completed_successfully
     labels:
       - traefik.enable=true
       - traefik.http.routers.ai-agent.rule=Host(`ai-agent.${DOMAIN}`)
       - traefik.http.services.ai-agent.loadbalancer.server.port=8000
       - traefik.http.routers.ai-agent.entrypoints=websecure
       - traefik.http.routers.ai-agent.tls=true
-
     environment:
       - PYTHONUNBUFFERED=1
       - ENVIRONMENT=production
@@ -32,35 +53,31 @@ services:
     command: poetry run uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
     networks:
       - ingress
+
   phoenix:
-    image: arizephoenix/phoenix:latest # Must be greater than 4.0 version to work
+    image: arizephoenix/phoenix:latest
     container_name: phoenix
     ports:
-      - 6006:6006  # PHOENIX_PORT
-      - 4317:4317  # PHOENIX_GRPC_PORT
-      - 9090:9090  # [Optional] PROMETHEUS PORT IF ENABLED
+      - 6006:6006
+      - 4317:4317
+      - 9090:9090
     environment:
       - PHOENIX_WORKING_DIR=/mnt/data
       - PHOENIX_PORT=6006
       - PHOENIX_ENABLE_AUTH=true
       - PHOENIX_SECRET=${PHOENIX_SECRET}
     volumes:
-      - phoenix_data:/mnt/data   # PHOENIX_WORKING_DIR
+      - phoenix_data:/mnt/data
     labels:
       - traefik.enable=true
-      
-      # HTTP 서비스 설정
       - traefik.http.routers.phoenix.rule=Host(`phoenix.${DOMAIN}`)
       - traefik.http.services.phoenix.loadbalancer.server.port=6006
       - traefik.http.routers.phoenix.entrypoints=websecure
       - traefik.http.routers.phoenix.tls=true
-      
-      # gRPC 서비스를 위한 TCP 라우터 설정
       - traefik.tcp.routers.phoenix-grpc.rule=HostSNI(`phoenix-grpc.${DOMAIN}`)
       - traefik.tcp.routers.phoenix-grpc.entrypoints=grpcsecure
       - traefik.tcp.routers.phoenix-grpc.tls=true
       - traefik.tcp.services.phoenix-grpc.loadbalancer.server.port=4317
-
     networks:
       - ingress
 

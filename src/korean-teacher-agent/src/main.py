@@ -1,6 +1,6 @@
 from fastapi import FastAPI, Depends, HTTPException, status as http_status, BackgroundTasks
 from pydantic import BaseModel
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 import logging
 import json
 from contextlib import asynccontextmanager
@@ -12,6 +12,11 @@ from src.agents.writing_homework_agent import wrting_homework_agent
 from src.database.homework import create_db_and_tables_async, HomeworkResponse, Homework
 from src.database.db_setup import get_async_db
 from src.services.writing_homework import create_writing_homework_background_task
+from dotenv import load_dotenv
+from src.services.heartbeat_service import send_homework_to_heartbeat
+import os
+import uuid
+load_dotenv()
 
 
 # Configure logging
@@ -27,7 +32,8 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     # 애플리케이션 시작 시 실행될 코드
     logger.info("애플리케이션 시작 - 데이터베이스 및 테이블 초기화...")
-    await create_db_and_tables_async() # DB 및 테이블 생성
+    # await create_db_and_tables_async() # DB 및 테이블 생성
+
     logger.info("데이터베이스 및 테이블 초기화 완료.")
     
     yield 
@@ -44,6 +50,11 @@ app = FastAPI(
 class HealthResponse(BaseModel):
     status: str
     version: str
+
+class Button(BaseModel):
+    type: str
+    label: str
+    fk_webhook_id: str
 
 class RowData(BaseModel):
     id: int
@@ -62,14 +73,13 @@ class RequestData(BaseModel):
     table_name: str
     rows: list[RowData]
 
-class HomeworkCreationRequest(BaseModel):
+class HomeworkRequest(BaseModel):
     type: str
     id: str
     data: RequestData
 
     class Config:
         from_attributes = True
-
 
 
 @app.get("/")
@@ -83,9 +93,10 @@ async def health_check():
         "version": "1.0.0"
     }
 
+
 @app.post("/writing-homework", response_model=HomeworkResponse, status_code=http_status.HTTP_202_ACCEPTED)
 async def create_writing_homework(
-    request_data: HomeworkCreationRequest,
+    request_data: HomeworkRequest,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_async_db)
 ):
@@ -129,3 +140,46 @@ async def create_writing_homework(
     
     logger.info(f"Homework ID {homework_entry.id} 요청 수신. 숙제 생성 작업 백그라운드에서 시작됨.")
     return HomeworkResponse.from_orm_model(homework_entry)
+
+
+@app.post("/send-writing-homework", response_model=HomeworkResponse, status_code=http_status.HTTP_200_OK)
+async def send_writing_homework(
+    homework_request: HomeworkRequest,
+    db: AsyncSession = Depends(get_async_db)
+):
+    logger.info(f"Homework request: {homework_request}")
+    
+    # Extract the homework ID from the structure
+    if not homework_request.data.rows:
+        raise HTTPException(
+            status_code=http_status.HTTP_400_BAD_REQUEST,
+            detail="No homework data found in the request"
+        )
+    
+    homework_id = homework_request.data.rows[0].id
+    logger.info(f"Homework ID: {homework_id}")
+    
+    result = await db.execute(select(Homework).where(Homework.id == homework_id))
+    homework = result.scalar_one_or_none()
+    if not homework:
+        raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail=f"Homework with ID {homework_id} not found")
+    
+    # Send to Heartbeat asynchronously
+    channel_id = os.getenv("HEARTBEAT_CHANNEL_ID", "8478bca8-9818-405e-89b8-81f6bb0aaf8e")
+    from_uuid = os.getenv("HEARTBEAT_FROM_UUID", "1a54fcc7-3580-46e0-9edd-017a4e2a139e")
+    response = await send_homework_to_heartbeat(homework, channel_id, from_uuid)
+
+
+    if response is None:
+        raise HTTPException(
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to send hmework to Heartbeat channel"
+        )
+
+    homework.status = "sended"
+    homework.homework_url = response.get("url")
+    db.add(homework)
+    await db.commit()
+    await db.refresh(homework)
+
+    return HomeworkResponse.from_orm_model(homework)

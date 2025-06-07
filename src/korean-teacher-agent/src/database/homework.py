@@ -4,7 +4,7 @@ from typing import List, Optional
 import uuid
 
 from pydantic import BaseModel, Field as PydanticField # SQLAlchemy의 Column과 구분
-from sqlalchemy import Column, Integer, String, Text, DateTime, UUID
+from sqlalchemy import Column, Integer, String, Text, DateTime, UUID, text
 from sqlalchemy.orm import declarative_base
 from sqlalchemy.sql import func
 from .db_setup import async_engine
@@ -23,6 +23,7 @@ class Homework(Base):
     detailed_homework = Column(Text, nullable=True)
     error_message = Column(Text, nullable=True)
     status = Column(String(50), nullable=False, default="requested", index=True)
+    homework_url = Column(String(255), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
