@@ -68,7 +68,9 @@ class PromptManager:
         for message in formatted_prompt.messages:
             messages.append((message["role"], message["content"]))
 
+
         return ChatPromptTemplate.from_messages(messages)
+   
     
     def refresh_prompt(self, prompt_name: str) -> object:
         """
@@ -119,7 +121,9 @@ if __name__ == "__main__":
     # Get the prompt from Phoenix (will be cached)
     prompt = prompt_manager.get_chat_prompt_template("writing-homework-idea", variables={
         "format_instructions": "안녕하세요?",
-        "question": "안녕하세요?"
+        "request": "안녕하세요?"
     })
     print(prompt)
-    
+    import pdb; pdb.set_trace()
+
+ 

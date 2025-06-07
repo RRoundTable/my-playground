@@ -11,6 +11,8 @@ from langchain_core.language_models import BaseChatModel # LLM 타입 힌트를 
 from langchain_openai import ChatOpenAI
 
 from langgraph.graph import StateGraph, END
+from src.prompts import prompt_manager
+
 
 # 로거 설정
 logging.basicConfig(
@@ -54,21 +56,14 @@ def create_korean_homework_agent() -> StateGraph:
         logger.info("--- 숙제 아이디어 구상 중 ---")
         parser = JsonOutputParser(pydantic_object=HomeworkIdea)
 
-        prompt = ChatPromptTemplate.from_messages([
-            ("system",
-             "당신은 창의적인 한국어 글쓰기 숙제 아이디어를 제안하는 AI입니다. "
-             "사용자의 요청에 따라 숙제의 주제, 글쓰기 유형, 그리고 관련 키워드를 제안해야 합니다. "
-             "결과는 반드시 JSON 형식으로 반환하며, 모든 내용은 한국어로 작성되어야 합니다.\n"
-             "{format_instructions}"),
-            ("human", "{request}")
-        ])
+        prompt = prompt_manager.get_chat_prompt_template("writing-homework-idea", variables={
+            "format_instructions": parser.get_format_instructions().replace('{', '{{').replace('}', '}}'),
+            "request": f"'{state['initial_request']}' 요청에 대한 창의적인 한국어 글쓰기 숙제 아이디어를 제안해주세요."
+        })
 
         chain = prompt | llm | parser
         try:
-            response = await chain.ainvoke({
-                "request": f"'{state['initial_request']}' 요청에 대한 창의적인 한국어 글쓰기 숙제 아이디어를 제안해주세요.",
-                "format_instructions": parser.get_format_instructions()
-            })
+            response = await chain.ainvoke({})
             logger.info(f"구상된 아이디어: {response}")
             return {"homework_idea": response, "error_message": None}
         except Exception as e:
