@@ -6,6 +6,7 @@ from typing import Dict, Optional
 import threading
 import time
 import signal
+from langchain_core.prompts import ChatPromptTemplate
 
 # Load environment variables
 load_dotenv()
@@ -56,6 +57,19 @@ class PromptManager:
             return self.refresh_prompt(prompt_name)
         return self._prompt_cache[prompt_name]
     
+    def get_chat_prompt_template(self, prompt_name: str, variables: dict = {}) -> ChatPromptTemplate:
+        """
+        Get a chat prompt template from cache or Phoenix if not cached.
+        """
+        prompt = self.get_prompt(prompt_name)
+        formatted_prompt = prompt.format(variables=variables)
+
+        messages =[]
+        for message in formatted_prompt.messages:
+            messages.append((message["role"], message["content"]))
+
+        return ChatPromptTemplate.from_messages(messages)
+    
     def refresh_prompt(self, prompt_name: str) -> object:
         """
         Refresh a specific prompt from Phoenix and update cache.
@@ -103,18 +117,9 @@ prompt_manager = PromptManager()
 
 if __name__ == "__main__":
     # Get the prompt from Phoenix (will be cached)
-    prompt = prompt_manager.get_prompt("korean-teacher-agent")
+    prompt = prompt_manager.get_chat_prompt_template("writing-homework-idea", variables={
+        "format_instructions": "안녕하세요?",
+        "question": "안녕하세요?"
+    })
+    print(prompt)
     
-    # Print the prompt ID
-    print(f"Prompt ID: {prompt.id}")
-    
-    # Use the _dumps method to parse the prompt data
-    parsed_prompt = prompt._dumps()
-    import pprint
-    pprint.pprint(parsed_prompt)
-   
-    formatted_prompt = prompt.format(variables={"question": "안녕하세요?"})
-    print(formatted_prompt)
-    
-    # Example of how to trigger a refresh using SIGUSR1 signal
-    print(f"To refresh prompts, run: kill -SIGUSR1 {os.getpid()}")
