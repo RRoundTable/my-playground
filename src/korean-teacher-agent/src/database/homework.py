@@ -22,7 +22,7 @@ class Homework(Base):
     homework_keywords = Column(Text, nullable=True) # JSON string
     detailed_homework = Column(Text, nullable=True)
     error_message = Column(Text, nullable=True)
-    status = Column(String(50), nullable=False, default="requested", index=True)
+    status = Column(String(50), nullable=True, default="requested", index=True)
     homework_url = Column(String(255), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

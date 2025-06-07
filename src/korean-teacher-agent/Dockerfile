@@ -23,6 +23,7 @@ RUN poetry install --no-interaction --no-ansi
 
 # Copy the rest of the project files
 COPY src /app/src/
+COPY migrations /app/migrations
 RUN mkdir -p /app/database
 # Expose the port the app runs on
 EXPOSE 8000

@@ -56,7 +56,6 @@ def run_migrations_offline() -> None:
     with context.begin_transaction():
         context.run_migrations()
 
-
 def run_migrations_online() -> None:
     """Run migrations in 'online' mode.
 
@@ -71,13 +70,18 @@ def run_migrations_online() -> None:
     )
 
     with connectable.connect() as connection:
+        # ===== [수정 시작] =====
+        # render_as_batch=True 옵션을 추가하여
+        # SQLite의 제약사항을 우회하는 배치 모드를 활성화합니다.
         context.configure(
-            connection=connection, target_metadata=target_metadata
+            connection=connection,
+            target_metadata=target_metadata,
+            render_as_batch=True  # 이 라인을 추가하세요!
         )
+        # ===== [수정 끝] =====
 
         with context.begin_transaction():
             context.run_migrations()
-
 
 if context.is_offline_mode():
     run_migrations_offline()

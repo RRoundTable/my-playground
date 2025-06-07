@@ -18,6 +18,7 @@ services:
     command: ["poetry", "run", "alembic", "upgrade", "head"]
     volumes:
       - ./src/korean-teacher-agent/:/app  # alembic.ini 등을 읽기 위해 필요
+      - ./src/korean-teacher-agent/migrations/:/app/migrations    # migrations 파일에 접근하기 위해 필요
       - ai-agent-sqlite:/app/database    # DB 파일에 접근하기 위해 필요
     networks:
       - ingress

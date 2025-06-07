@@ -7,7 +7,7 @@ from src.database.homework import Homework
 
 logger = logging.getLogger(__name__)
 
-async def send_homework_to_heartbeat(homework: Homework, channel_id: str, from_uuid: Optional[str] = None) -> Optional[str]:
+async def send_homework_to_heartbeat(homework: Homework, channel_id: str, from_uuid: Optional[str] = None) -> Optional[dict]:
     """
     Send homework to Heartbeat channel asynchronously
     
@@ -49,9 +49,9 @@ async def send_homework_to_heartbeat(homework: Homework, channel_id: str, from_u
         async with aiohttp.ClientSession() as session:
             async with session.put(url, headers=headers, json=message_content) as response:
                 response.raise_for_status()  # Raise an exception for bad status codes
-                response_text = await response.text()
+                response_data = await response.json()
                 logger.info(f"Successfully sent homework {homework.id} to Heartbeat channel {channel_id}")
-                return response_text
+                return response_data
     except aiohttp.ClientError as e:
         logger.error(f"Failed to send homework to Heartbeat: {str(e)}")
         return None 
