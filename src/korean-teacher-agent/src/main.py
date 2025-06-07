@@ -17,7 +17,7 @@ from src.services.heartbeat_service import send_homework_to_heartbeat
 import os
 import uuid
 load_dotenv()
-
+from phoenix.otel import register
 
 # Configure logging
 logging.basicConfig(
@@ -26,6 +26,25 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger(__name__)
+
+phoenix_endpoint = os.getenv("PHOENIX_COLLECTOR_ENDPOINT")
+phoenix_secret = os.getenv("PHOENIX_API_KEY", "")
+
+
+logger.info(f"Phoenix endpoint: {phoenix_endpoint}")
+logger.info(f"Phoenix API key configured: {bool(phoenix_secret)}")
+
+ 
+# register 함수로 설정 초기화 (API 키가 있으면 자동으로 Authorization 헤더 추가)
+tracer_provider = register(
+    project_name="korean-teacher-agent",
+    protocol="grpc",
+    endpoint=phoenix_endpoint,
+    headers={"Authorization": f"Bearer {phoenix_secret}"} if phoenix_secret else {},
+    auto_instrument=True
+)   
+
+
 
 # lifespan 컨텍스트 매니저 정의
 @asynccontextmanager
@@ -64,9 +83,9 @@ class RowData(BaseModel):
     homework_keywords: str | None = None
     detailed_homework: str | None = None
     error_message: str | None = None
-    status: str
-    created_at: str
-    updated_at: str
+    status: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
 
 class RequestData(BaseModel):
     table_id: str

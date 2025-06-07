@@ -32,26 +32,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger('notion_agent')
 
-# Initialize OpenTelemetry with Phoenix
-# Phoenix server 도메인으로 환경 변수 설정
-
-phoenix_endpoint = os.getenv("PHOENIX_COLLECTOR_ENDPOINT")
-phoenix_secret = os.getenv("PHOENIX_API_KEY", "")
-
-
-logger.info(f"Phoenix endpoint: {phoenix_endpoint}")
-logger.info(f"Phoenix API key configured: {bool(phoenix_secret)}")
-
- 
-# register 함수로 설정 초기화 (API 키가 있으면 자동으로 Authorization 헤더 추가)
-tracer_provider = register(
-    project_name="notion-agent",
-    protocol="grpc",
-    endpoint=phoenix_endpoint,
-    headers={"Authorization": f"Bearer {phoenix_secret}"} if phoenix_secret else {},
-    auto_instrument=True
-)   
-
 # Define the state type for our Page Evaluation Workflow
 class PageEvaluationWorkflowState(TypedDict):
     """The state of the page evaluation workflow."""
