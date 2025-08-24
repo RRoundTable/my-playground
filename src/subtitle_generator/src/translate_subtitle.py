@@ -47,7 +47,7 @@ async def translate_text_block(block_texts: list[str], source_lang: str, target_
         )
         
         completion = await client.chat.completions.create(
-            model="gpt-4.1-mini", # Consider gpt-4 for more complex instructions if mini struggles
+            model="gpt-5-mini", # Consider gpt-4 for more complex instructions if mini struggles
             messages=[
                 {
                     "role": "system",
