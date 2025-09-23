@@ -42,7 +42,7 @@ RUN poetry install --no-interaction --no-ansi --no-root --no-dev
 # 8. Copy application code
 # This assumes your source code is in a 'src' directory in your project root.
 COPY ./src /app/src
-COPY ./models /app/models
+COPY ./models /models
 # 9. Expose the port Gradio runs on (default is 7860)
 EXPOSE 7860
 

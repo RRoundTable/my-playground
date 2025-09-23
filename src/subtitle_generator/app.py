@@ -8,7 +8,8 @@ from pathlib import Path
 from dotenv import load_dotenv
 import tempfile # For creating temporary files
 from src.translate_subtitle import translate_subtitle_objects_in_blocks, BLOCK_SIZE, _read_window_radius_from_env # Import shared components
-from src.generate_subtitle import transcribe_with_whisper, format_timestamp
+from src.generate_subtitle import transcribe_chunks_with_offsets, format_timestamp
+from src.vad_onnx import detect_utterances_with_vad, VadConfig
 from typing import Optional, Tuple
 
 load_dotenv()
@@ -128,18 +129,32 @@ async def generate_subtitles_from_audio_for_gradio(audio_file_path: str, languag
     if not audio_file_path:
         return None, "Error: No audio file provided."
 
-    status_message = f"Transcribing audio in {language if language else 'auto-detect'} to generate subtitles using local Whisper model..."
+    normalized_lang = (language or "").strip()
+    if normalized_lang.lower() == "auto-detect":
+        normalized_lang = None
+    status_message = f"Transcribing audio in {normalized_lang or 'auto-detect'} with VAD+chunked Whisper API..."
     print(status_message)
 
     try:
+        # 1) Run VAD segmentation on full audio
+        from pydub import AudioSegment
+        audio = AudioSegment.from_file(audio_file_path)
+        total_ms = len(audio)
+        print(f"[VAD] Input audio duration: {total_ms} ms (~{total_ms/1000.0:.2f} s)")
+        vad_model_path = os.getenv("VAD_MODEL_PATH", "/models/model.onnx")
+        utterances = detect_utterances_with_vad(audio, vad_model_path, VadConfig())
+        print(f"[VAD] Detected {len(utterances)} utterances using model: {vad_model_path}")
+        for i, u in enumerate(utterances, start=1):
+            print(f"  - #{i}: start={u['start_ms']}ms end={u['end_ms']}ms dur={u['end_ms']-u['start_ms']}ms")
+
+        if not utterances:
+            return None, "No utterances detected by VAD. Nothing to transcribe."
+
+        # 2) Transcribe chunks concurrently and merge with accurate offsets
         loop = asyncio.get_event_loop()
-        # Run the synchronous Whisper transcription in a separate thread
         transcription_result = await loop.run_in_executor(
-            None,  # Uses the default thread pool executor
-            transcribe_with_whisper,
-            audio_file_path,
-            "base",  # Whisper model name (e.g., "tiny", "base", "small", "medium", "large")
-            language if language and language.strip() else None  # Pass language if provided, else None for auto-detect
+            None,
+            lambda: transcribe_chunks_with_offsets(audio_file_path, normalized_lang, utterances, concurrency=int(os.getenv("TRANSCRIBE_CONCURRENCY", "20")))
         )
 
         if not transcription_result or "segments" not in transcription_result or not transcription_result["segments"]:
@@ -167,7 +182,7 @@ async def generate_subtitles_from_audio_for_gradio(audio_file_path: str, languag
             tmp_file.write(srt_content)
             temp_file_path = tmp_file.name
         
-        success_message = "Subtitle generation complete using OpenAI Whisper. SRT file generated."
+        success_message = "Subtitle generation complete using VAD+chunked OpenAI Whisper. SRT file generated."
         print(success_message)
         return temp_file_path, success_message
     # except openai.APIError as e: # This is for OpenAI API, not local Whisper
@@ -175,7 +190,7 @@ async def generate_subtitles_from_audio_for_gradio(audio_file_path: str, languag
     #     print(error_msg)
     #     return None, error_msg
     except Exception as e:
-        error_msg = f"Error during OpenAI Whisper subtitle generation: {e}"
+        error_msg = f"Error during VAD+chunked OpenAI Whisper subtitle generation: {e}"
         print(error_msg)
         return None, error_msg
 

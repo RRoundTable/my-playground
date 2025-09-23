@@ -11,12 +11,12 @@ from pydub import AudioSegment
 class VadConfig:
     sampleRateTarget: int = 16000
     frameMs: int = 30
-    speechProbabilityThreshold: float = 0.5
+    speechProbabilityThreshold: float = 0.3
     startSpeechAfterMs: int = 90
     endSilenceAfterMs: int = 500
     prefixPaddingMs: int = 300
     maxUtteranceMs: int = 12000
-    minUtteranceMs: int = 250
+    minUtteranceMs: int = 100
 
 
 def load_onnx_vad(model_path: str) -> ort.InferenceSession:
