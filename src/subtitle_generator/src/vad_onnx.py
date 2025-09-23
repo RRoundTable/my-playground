@@ -11,7 +11,7 @@ from pydub import AudioSegment
 class VadConfig:
     sampleRateTarget: int = 16000
     frameMs: int = 30
-    speechProbabilityThreshold: float = 0.3
+    speechProbabilityThreshold: float = 0.4
     startSpeechAfterMs: int = 90
     endSilenceAfterMs: int = 500
     prefixPaddingMs: int = 300
