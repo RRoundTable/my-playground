@@ -229,10 +229,15 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
             with gr.Row():
                 with gr.Column(scale=1):
                     audio_file_input = gr.Audio(label="Upload Audio File", type="filepath", sources=["upload"])
-                    generation_lang_input = gr.Textbox(
-                        label="Audio Language", 
-                        value="English", 
-                        info="Specify the language of the audio (e.g., English, Korean, ja, es). ISO 639-1 codes (e.g., en, ko) are recommended."
+                    generation_lang_input = gr.Dropdown(
+                        label="Audio Language",
+                        choices=[
+                            "Korean", "English", "Japanese", "Chinese", "Spanish", "German", "French", "Italian",
+                            "Portuguese", "Russian", "Vietnamese", "Thai", "Turkish", "Arabic", "Hebrew",
+                            "Polish", "Dutch", "Indonesian", "Hindi", "Auto-detect"
+                        ],
+                        value="Korean",
+                        info="Select the language of the audio. Choose 'Auto-detect' if unsure."
                     )
                     generate_button = gr.Button("Generate Subtitles", variant="primary")
                 with gr.Column(scale=1):

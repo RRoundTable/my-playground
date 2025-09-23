@@ -15,6 +15,7 @@ openai-whisper = "^20231117"
 pydub = "^0.25.1"
 torch = ">=1.13.1" # Whisper는 특정 torch 버전이 필요할 수 있습니다. 필요시 조정하세요.
 numpy = "*" # 보통 torch나 whisper의 의존성으로 설치되지만 명시하는 것이 좋습니다.
+onnxruntime = "^1.22.1"
 
 [tool.poetry.group.dev.dependencies] # 선택 사항: 개발 도구용
 # pytest = "^7.0"
