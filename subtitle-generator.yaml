@@ -23,6 +23,7 @@ services:
       - traefik.http.routers.subtitle-generator.middlewares=authentik-proxy@docker
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - BLOCK_SIZE=100
     volumes:
       - ./src/subtitle_generator/:/app
       - subtitle-generator-data:/data

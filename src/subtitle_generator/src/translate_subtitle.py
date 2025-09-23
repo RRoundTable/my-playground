@@ -10,100 +10,254 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Define a block size for how many subtitles to process in one API call
-BLOCK_SIZE = 5
+# Default changed to 3 for tighter sliding-window groups
+BLOCK_SIZE = 3
 
-async def translate_text_block(block_texts: list[str], source_lang: str, target_lang: str, client: openai.AsyncOpenAI) -> list[str]:
+def _read_window_radius_from_env() -> int:
     """
-    Translates a block (list) of subtitle texts using the OpenAI API.
-    Instructs the AI to maintain a 1:1 mapping for texts within the block.
-    Returns the list of translated texts. If translation or parsing fails to maintain count,
-    it returns the original block_texts.
+    Reads sliding window radius from the SUB_WINDOW_RADIUS environment variable.
+    Falls back to default of 2 if unset or invalid.
     """
-    if not block_texts:
+    env_value = os.getenv("SUB_WINDOW_RADIUS", "5").strip()
+    try:
+        value = int(env_value)
+        return max(0, value)
+    except Exception:
+        return 2
+
+def _normalize_single_line(text: str) -> str:
+    """
+    Normalizes a subtitle text to a single line for prompt stability.
+    """
+    return text.replace('\n', ' ').strip()
+
+def _build_window_for_index(all_subs: list[srt.Subtitle], target_index: int, radius: int) -> dict:
+    """
+    Builds a context window around a target subtitle index.
+    Keys: 'target', 'prev' (list from farthest to nearest), 'next' (list from nearest to farthest).
+    """
+    total = len(all_subs)
+    prev_items: list[str] = []
+    next_items: list[str] = []
+
+    if radius > 0:
+        # Previous: from farthest (-radius) to nearest (-1)
+        for offset in range(radius, 0, -1):
+            idx = target_index - offset
+            if 0 <= idx < total:
+                prev_items.append(_normalize_single_line(all_subs[idx].content))
+        # Next: from nearest (+1) to farthest (+radius)
+        for offset in range(1, radius + 1):
+            idx = target_index + offset
+            if 0 <= idx < total:
+                next_items.append(_normalize_single_line(all_subs[idx].content))
+
+    return {
+        "target": _normalize_single_line(all_subs[target_index].content),
+        "prev": prev_items,
+        "next": next_items,
+    }
+
+def _build_windows_for_indices(all_subs: list[srt.Subtitle], target_indices: list[int], radius: int) -> list[dict]:
+    """
+    Builds windows for multiple target subtitle indices.
+    Returns a list where each element corresponds to one target index, preserving order.
+    """
+    windows: list[dict] = []
+    for idx in target_indices:
+        if 0 <= idx < len(all_subs):
+            windows.append(_build_window_for_index(all_subs, idx, radius))
+    return windows
+
+def _format_windows_for_api(windows: list[dict]) -> str:
+    """
+    Formats multiple windows for a single API call as a numbered list of Items.
+    """
+    lines: list[str] = []
+    for i, w in enumerate(windows, start=1):
+        lines.append(f"Item {i}:")
+        if w.get("prev"):
+            lines.append("Previous Context:")
+            for text in w["prev"]:
+                lines.append(f"- {text}")
+        else:
+            lines.append("Previous Context:")
+        lines.append(f"Target Subtitle: {w.get('target', '')}")
+        if w.get("next"):
+            lines.append("Future Context:")
+            for text in w["next"]:
+                lines.append(f"- {text}")
+        else:
+            lines.append("Future Context:")
+        lines.append("---")
+    return "\n".join(lines)
+
+def _format_compacted_block_for_api(all_subs: list[srt.Subtitle], target_indices: list[int], radius: int) -> str:
+    """
+    Compacts overlapping context across multiple Items into one Shared Context section.
+    Then lists Items with only 'Target Subtitle' lines.
+    Assumes target_indices are in ascending order and roughly consecutive (as in our blocks).
+    """
+    if not target_indices:
+        return ""
+
+    total = len(all_subs)
+    first_target = target_indices[0]
+    last_target = target_indices[-1]
+    context_start = max(0, first_target - max(0, radius))
+    context_end = min(total - 1, last_target + max(0, radius))
+
+    # Build shared context excluding target indices
+    target_set = set(target_indices)
+    shared_context_lines: list[str] = []
+    for idx in range(context_start, context_end + 1):
+        if idx in target_set:
+            continue
+        shared_context_lines.append(_normalize_single_line(all_subs[idx].content))
+
+    # Compose final message
+    lines: list[str] = []
+    lines.append("Shared Context:")
+    for text in shared_context_lines:
+        lines.append(f"- {text}")
+    lines.append("---")
+
+    for i, idx in enumerate(target_indices, start=1):
+        lines.append(f"Item {i}:")
+        lines.append(f"Target Subtitle: {_normalize_single_line(all_subs[idx].content)}")
+        lines.append("---")
+
+    return "\n".join(lines)
+
+async def translate_windowed_block(windows: list[dict], source_lang: str, target_lang: str, client: openai.AsyncOpenAI) -> list[str]:
+    """
+    Translates only the Target line for each provided window, using surrounding Prev/Next as context.
+    Returns translations as a list matching the windows length. Falls back to original Targets on mismatch or error.
+    """
+    if not windows:
         return []
 
-    # Prepare the numbered list of texts for the API
-    numbered_input_texts = []
-    for i, text in enumerate(block_texts):
-        # Normalize newlines within a single subtitle text to avoid confusing the AI's list parsing
-        normalized_text = text.replace('\n', ' ') 
-        numbered_input_texts.append(f"{i+1}. {normalized_text}")
-    api_input_string = "\n".join(numbered_input_texts)
-
+    api_input_string = _format_windows_for_api(windows)
+    print("#"*100)
+    print(api_input_string)
+    print("#"*100)
     try:
         system_prompt_content = (
-            f"You are an expert youtube subtitle translator. You will be given a block of text consisting of a numbered list of subtitles. "
-            f"Each number corresponds to a distinct original subtitle that must have its own distinct translation. "
-            f"Your task is to:"
-            f"1. Translate *each* subtitle in the numbered list from {source_lang} to {target_lang}."
-            f"2. Return the translations as a strictly numbered list, matching the original numbering, order, and *exact count* of subtitles. "
-            f"For example, if you receive 3 subtitles, you MUST return 3 translated subtitles, numbered 1, 2, and 3."
-            f"3. Ensure that each translated subtitle in your response corresponds to its respective original subtitle."
-            f"Do NOT merge distinct original subtitles into a single translated item. "
-            f"Do NOT split a single original subtitle into multiple numbered translated items. "
-            f"If an original subtitle is short, provide its short translation. "
-            f"If an original subtitle translates into multiple sentences, keep those sentences as part of the single translated entry for that original numbered subtitle."
-            f"4. Output *only* the numbered list of translations. Do not add any introductory or concluding remarks, or any text other than the required numbered list."
+            f"You are a youtube subtitle translator/localizer. Translate the Korean text into natural American English for everyday use by U.S. adults in their 20s–40s."
+            f"Use common American phrasing with contractions"
+            f"Use U.S. conventions (Oct 5; a.m./p.m.; $, miles/feet)."
+            f"Each Item presents subtitles in three sections: 'Previous Context', 'Target Subtitle', and 'Future Context'. "
+            f"Your task is to: "
+            f"1. Translate only the text of the 'Target Subtitle' for each Item from {source_lang} to {target_lang}, using the context sections only to inform meaning, tone, and disambiguation. "
+            f"2. Return exactly N lines (N = number of Items), in order. Each line must contain only the translation text (no numbering, bullets, or extra commentary). "
+            f"3. Do not insert blank lines. If a translation would be empty, repeat the Target Subtitle unchanged. Replace any internal line breaks with spaces so each translation is a single line."
         )
-        
-        completion = await client.chat.completions.create(
-            model="gpt-5-mini", # Consider gpt-4 for more complex instructions if mini struggles
-            messages=[
-                {
-                    "role": "system",
-                    "content": system_prompt_content
-                },
-                {
-                    "role": "user",
-                    "content": api_input_string
-                }
-            ]
-        )
-        raw_translated_text = completion.choices[0].message.content.strip() if completion.choices[0].message else ""
 
-        # Parse the numbered list from the AI's response
+        completion = await client.chat.completions.create(
+            model="gpt-5-mini",
+            messages=[
+                {"role": "system", "content": system_prompt_content},
+                {"role": "user", "content": api_input_string},
+            ],
+        )
+
+        raw_translated_text = completion.choices[0].message.content.strip() if completion.choices[0].message else ""
+        print("#"*100, "raw_translated_text", "#"*100)
+        print(raw_translated_text) 
         translated_lines = raw_translated_text.split('\n')
-        parsed_translations = []
+        parsed_translations: list[str] = []
         for line_str in translated_lines:
             processed_line = line_str.strip()
             if not processed_line:
-                continue # Skip empty lines
-
+                continue
             text_to_clean = ""
-            # Attempt to strip the main list numbering (e.g., "1. ", "2. ")
             match = re.match(r"^(\d+)\.\s*(.*)", processed_line)
             if match:
-                # Content after the main list number
                 text_to_clean = match.group(2).strip()
             else:
-                # Line didn't start with "N. ", so assume it's content itself
-                # (or a malformed line from AI). The count check later will handle format discrepancies.
                 text_to_clean = processed_line
-            
-            # Now, additionally remove any "N. " if it *still* prefixes the text_to_clean.
-            # This handles cases like the AI returning "1. 1. Actual content" or if a line was just "1. Actual content".
             final_text = re.sub(r"^\d+\.\s*", "", text_to_clean).strip()
-            
-            if final_text: # Only add if there's content after all cleaning
+            if final_text:
                 parsed_translations.append(final_text)
-        
-        if len(parsed_translations) == len(block_texts):
-            return parsed_translations
-        else:
-            print(f"Warning: Mismatch in subtitle count for a block. Expected {len(block_texts)}, got {len(parsed_translations)}.")
-            print(f"Original texts: {block_texts}")
-            print(f"Received (parsed) translations: {parsed_translations}")
-            print("Using original texts for this block to maintain integrity.")
-            return block_texts # Fallback to original texts for this block
 
+        expected_n = len(windows)
+        if len(parsed_translations) > expected_n:
+            parsed_translations = parsed_translations[:expected_n]
+
+        if len(parsed_translations) < expected_n:
+            print(f"Warning: Mismatch in windowed block count. Expected {expected_n}, got {len(parsed_translations)}. Filling missing with original targets.")
+            missing = [w.get("target", "") for w in windows[len(parsed_translations):]]
+            parsed_translations.extend(missing)
+
+        return parsed_translations
     except Exception as e:
-        print(f"Error during translation for block: {block_texts[0] if block_texts else 'N/A'}... Error: {e}")
-        return block_texts # Fallback to original texts for this block on error
+        print(f"Error during windowed translation for block starting with target '{windows[0].get('target', '') if windows else 'N/A'}'... Error: {e}")
+        return [w.get("target", "") for w in windows]
 
-async def translate_subtitle_objects_in_blocks(original_subs: list[srt.Subtitle], source_lang: str, target_lang: str, client: openai.AsyncOpenAI, block_processing_size: int) -> tuple[list[srt.Subtitle], int, int]:
+async def translate_compacted_block(api_input_string: str, expected_items: int, source_lang: str, target_lang: str, client: openai.AsyncOpenAI) -> list[str]:
+    """
+    Translates only the Target lines for a compacted block input that contains a Shared Context and multiple Items.
+    Returns a list of length expected_items, truncating or filling with originals if count mismatches.
+    """
+    if not api_input_string or expected_items <= 0:
+        return []
+
+    try:
+        system_prompt_content = (
+            f"You are a youtube subtitle translator/localizer. Translate the Korean text into natural American English for everyday use by U.S. adults in their 20s–40s."
+            f"Use common American phrasing with contractions"
+            f"Use U.S. conventions (Oct 5; a.m./p.m.; $, miles/feet)."
+            f"You will be given a Shared Context followed by Items. Each Item contains only a 'Target Subtitle'. "
+            f"Your task is to: "
+            f"1. Translate only each 'Target Subtitle' from {source_lang} to {target_lang}, using the Shared Context solely for meaning, tone, and disambiguation. "
+            f"2. Return exactly N lines (N = number of Items), in order. Each line must contain only the translation text (no numbering, bullets, or extra commentary). "
+            f"3. Do not insert blank lines. If a translation would be empty, repeat the Target Subtitle unchanged. Replace any internal line breaks with spaces so each translation is a single line."
+        )
+
+        completion = await client.chat.completions.create(
+            model="gpt-5-mini",
+            messages=[
+                {"role": "system", "content": system_prompt_content},
+                {"role": "user", "content": api_input_string},
+            ],
+        )
+
+        raw_translated_text = completion.choices[0].message.content.strip() if completion.choices[0].message else ""
+        translated_lines = raw_translated_text.split('\n')
+        parsed_translations: list[str] = []
+        for line_str in translated_lines:
+            processed_line = line_str.strip()
+            if not processed_line:
+                continue
+            text_to_clean = ""
+            match = re.match(r"^(\d+)\.\s*(.*)", processed_line)
+            if match:
+                text_to_clean = match.group(2).strip()
+            else:
+                text_to_clean = processed_line
+            final_text = re.sub(r"^\d+\.\s*", "", text_to_clean).strip()
+            if final_text:
+                parsed_translations.append(final_text)
+
+        expected_n = expected_items
+        if len(parsed_translations) > expected_n:
+            parsed_translations = parsed_translations[:expected_n]
+        if len(parsed_translations) < expected_n:
+            print(f"Warning: Mismatch in compacted block count. Expected {expected_n}, got {len(parsed_translations)}. Filling missing with placeholders.")
+            # Fill with empty strings; caller may decide to backfill with originals if needed
+            parsed_translations.extend([""] * (expected_n - len(parsed_translations)))
+
+        return parsed_translations
+    except Exception as e:
+        print(f"Error during compacted translation block... Error: {e}")
+        return [""] * expected_items
+
+async def translate_subtitle_objects_in_blocks(original_subs: list[srt.Subtitle], source_lang: str, target_lang: str, client: openai.AsyncOpenAI, block_processing_size: int, window_radius: int) -> tuple[list[srt.Subtitle], int, int]:
     """
     Processes a list of srt.Subtitle objects in blocks, translates them, and returns the results.
     """
+    if not window_radius or window_radius <= 0:
+        raise ValueError("window_radius must be > 0 for sliding-window translation")
     tasks = []
     original_subs_blocks = []  # To keep track of original srt.Subtitle objects for each block
     final_translated_subtitle_objects = []
@@ -114,13 +268,20 @@ async def translate_subtitle_objects_in_blocks(original_subs: list[srt.Subtitle]
         block_of_original_subs = original_subs[i:i + block_processing_size]
         original_subs_blocks.append(block_of_original_subs)
 
-        block_texts_to_translate = [sub.content for sub in block_of_original_subs]
-        tasks.append(translate_text_block(block_texts_to_translate, source_lang, target_lang, client))
+        target_indices = list(range(i, i + len(block_of_original_subs)))
+        api_input_string = _format_compacted_block_for_api(original_subs, target_indices, window_radius)
+
+        # Wrap in a coroutine to reuse the same gathering pattern
+        async def _run_compacted(api_input=api_input_string, n_items=len(target_indices)):
+            return await translate_compacted_block(api_input, n_items, source_lang, target_lang, client)
+
+        tasks.append(_run_compacted())
+
 
     if tasks: # Only proceed if there are tasks to run
         # print(f"Sending {len(tasks)} blocks for asynchronous translation...") # Caller can log this
         block_translation_results = await asyncio.gather(*tasks, return_exceptions=True)
-        # print("All translation blocks processed.") # Caller can log this
+        # print("All translation blocks processed.") #  Caller can log this
 
         for i, result_for_block in enumerate(block_translation_results):
             current_original_block = original_subs_blocks[i]
@@ -144,9 +305,22 @@ async def translate_subtitle_objects_in_blocks(original_subs: list[srt.Subtitle]
                         proprietary=original_sub_obj.proprietary
                     ))
             else:
-                print(f"Unexpected result type or mismatched count for block starting with subtitle index {current_original_block[0].index if current_original_block else 'N/A'}. Type: {type(result_for_block)}. Using original texts.")
-                final_translated_subtitle_objects.extend(current_original_block)
-                failed_blocks += 1
+                # Handle compacted translator that may return placeholders for missing
+                if isinstance(result_for_block, list) and len(result_for_block) == len(current_original_block):
+                    successful_blocks += 1
+                    for original_sub_obj, translated_text_content in zip(current_original_block, result_for_block):
+                        content_value = translated_text_content if translated_text_content else original_sub_obj.content
+                        final_translated_subtitle_objects.append(srt.Subtitle(
+                            index=original_sub_obj.index,
+                            start=original_sub_obj.start,
+                            end=original_sub_obj.end,
+                            content=content_value,
+                            proprietary=original_sub_obj.proprietary
+                        ))
+                else:
+                    print(f"Unexpected result type or mismatched count for block starting with subtitle index {current_original_block[0].index if current_original_block else 'N/A'}. Type: {type(result_for_block)}. Using original texts.")
+                    final_translated_subtitle_objects.extend(current_original_block)
+                    failed_blocks += 1
     elif not original_subs: # No original subtitles to process
         pass # No blocks, no tasks, successful_blocks and failed_blocks remain 0
     else: # Original subs exist, but perhaps block_processing_size led to no blocks (e.g. len(original_subs) < block_processing_size, but range starts at 0)
@@ -164,7 +338,7 @@ async def translate_subtitle_objects_in_blocks(original_subs: list[srt.Subtitle]
 
     return final_translated_subtitle_objects, successful_blocks, failed_blocks
 
-async def translate_srt_file(srt_file_path: str, source_lang: str, target_lang: str) -> None:
+async def translate_srt_file(srt_file_path: str, source_lang: str, target_lang: str, window_radius: int) -> None:
     """
     Reads an SRT file, translates its content in blocks asynchronously, 
     maintaining 1:1 subtitle mapping per block, and saves the translated version.
@@ -190,10 +364,13 @@ async def translate_srt_file(srt_file_path: str, source_lang: str, target_lang: 
         print("No subtitles found in the file.")
         return
 
-    print(f"Preparing {len(original_subs)} subtitles for translation from {source_lang} to {target_lang} in blocks of {BLOCK_SIZE}...")
+    if not window_radius or window_radius <= 0:
+        raise ValueError("window_radius must be > 0 for sliding-window translation")
+
+    print(f"Preparing {len(original_subs)} subtitles for translation from {source_lang} to {target_lang} in blocks of {BLOCK_SIZE} with window radius {window_radius}...")
 
     final_translated_subtitle_objects, successful_blocks, failed_blocks = await translate_subtitle_objects_in_blocks(
-        original_subs, source_lang, target_lang, client, BLOCK_SIZE
+        original_subs, source_lang, target_lang, client, BLOCK_SIZE, window_radius
     )
     
     print(f"Block processing summary: {successful_blocks} blocks successfully processed (may include fallbacks to original), {failed_blocks} blocks failed outright.")
@@ -220,6 +397,7 @@ async def main():
     parser.add_argument("srt_file_path", help="Path to the SRT file.")
     parser.add_argument("source_language", help="Source language (e.g., 'English').")
     parser.add_argument("target_language", help="Target language (e.g., 'Korean').")
+    parser.add_argument("--window-radius", type=int, default=None, help="Sliding window radius (context size on each side). Overrides SUB_WINDOW_RADIUS env if provided.")
 
     args = parser.parse_args()
 
@@ -229,7 +407,13 @@ async def main():
         print("Example: export OPENAI_API_KEY='your_api_key_here'")
         return
 
-    await translate_srt_file(args.srt_file_path, args.source_language, args.target_language)
+    # Determine window radius: CLI overrides env; env has default
+    env_radius = _read_window_radius_from_env()
+    window_radius = env_radius if args.window_radius is None else args.window_radius
+    if not window_radius or window_radius <= 0:
+        raise ValueError("window_radius must be > 0 for sliding-window translation")
+
+    await translate_srt_file(args.srt_file_path, args.source_language, args.target_language, window_radius)
 
 if __name__ == "__main__":
     asyncio.run(main())

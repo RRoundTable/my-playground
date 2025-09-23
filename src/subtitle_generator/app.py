@@ -7,14 +7,17 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 import tempfile # For creating temporary files
-from src.translate_subtitle import translate_subtitle_objects_in_blocks, BLOCK_SIZE # Import shared components
+from src.translate_subtitle import translate_subtitle_objects_in_blocks, BLOCK_SIZE, _read_window_radius_from_env # Import shared components
 from src.generate_subtitle import transcribe_with_whisper, format_timestamp
 from typing import Optional, Tuple
 
 load_dotenv()
 
+# Default window radius for UI (ensure at least 1)
+ENV_WINDOW_RADIUS_DEFAULT = max(1, _read_window_radius_from_env())
 
-async def process_srt_for_gradio(uploaded_srt_file_path: str, source_lang: str, target_lang: str) -> Tuple[Optional[str], str]:
+
+async def process_srt_for_gradio(uploaded_srt_file_path: str, source_lang: str, target_lang: str, window_radius: int) -> Tuple[Optional[str], str]:
     """
     Reads an SRT file from the given path, translates its content in blocks asynchronously,
     and saves the translated version to a temporary file.
@@ -49,13 +52,16 @@ async def process_srt_for_gradio(uploaded_srt_file_path: str, source_lang: str, 
     if not original_subs:
         return None, "No subtitles found in the file."
 
-    status_message = f"Preparing {len(original_subs)} subtitles for translation from {source_lang} to {target_lang} in blocks of {BLOCK_SIZE}..."
+    status_message = f"Preparing {len(original_subs)} subtitles for translation from {source_lang} to {target_lang} in blocks of {BLOCK_SIZE} with window radius {window_radius}..."
     print(status_message)
 
     # Call the imported core processing function
-    final_translated_subtitle_objects, successful_blocks, failed_blocks = await translate_subtitle_objects_in_blocks(
-        original_subs, source_lang, target_lang, client, BLOCK_SIZE
-    )
+    try:
+        final_translated_subtitle_objects, successful_blocks, failed_blocks = await translate_subtitle_objects_in_blocks(
+            original_subs, source_lang, target_lang, client, BLOCK_SIZE, window_radius
+        )
+    except ValueError as e:
+        return None, f"Configuration error: {e}"
 
     block_summary = f"Block processing summary: {successful_blocks} successfully processed, {failed_blocks} blocks failed."
     print(block_summary)
@@ -82,7 +88,7 @@ async def process_srt_for_gradio(uploaded_srt_file_path: str, source_lang: str, 
         print(error_writing_msg)
         return None, error_writing_msg
 
-async def translate_interface(srt_file_object, source_language, target_language):
+async def translate_interface(srt_file_object, source_language, target_language, window_radius):
     if not srt_file_object:
         return None, "Please upload an SRT file."
 
@@ -90,7 +96,7 @@ async def translate_interface(srt_file_object, source_language, target_language)
 
     status_updates = "Starting translation...\n"
     
-    translated_file_path, message = await process_srt_for_gradio(uploaded_srt_path, source_language, target_language)
+    translated_file_path, message = await process_srt_for_gradio(uploaded_srt_path, source_language, target_language, int(window_radius))
     
     status_updates += message
     
@@ -161,7 +167,7 @@ async def generate_subtitles_from_audio_for_gradio(audio_file_path: str, languag
             tmp_file.write(srt_content)
             temp_file_path = tmp_file.name
         
-        success_message = "Subtitle generation complete using local Whisper. SRT file generated."
+        success_message = "Subtitle generation complete using OpenAI Whisper. SRT file generated."
         print(success_message)
         return temp_file_path, success_message
     # except openai.APIError as e: # This is for OpenAI API, not local Whisper
@@ -169,7 +175,7 @@ async def generate_subtitles_from_audio_for_gradio(audio_file_path: str, languag
     #     print(error_msg)
     #     return None, error_msg
     except Exception as e:
-        error_msg = f"Error during local Whisper subtitle generation: {e}"
+        error_msg = f"Error during OpenAI Whisper subtitle generation: {e}"
         print(error_msg)
         return None, error_msg
 
@@ -202,6 +208,7 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
                     srt_file_input = gr.File(label="Upload SRT File", type="filepath", file_types=[".srt"])
                     source_lang_input = gr.Textbox(label="Source Language", value="English")
                     target_lang_input = gr.Textbox(label="Target Language", value="Korean")
+                    window_radius_input = gr.Slider(label="Window Radius", minimum=1, maximum=8, step=1, value=ENV_WINDOW_RADIUS_DEFAULT, info="Number of context subtitles on each side")
                     translate_button = gr.Button("Translate Subtitles", variant="primary")
                 with gr.Column(scale=1):
                     translate_status_output = gr.Textbox(label="Translation Status / Log", lines=10, interactive=False, autoscroll=True)
@@ -209,7 +216,7 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
             
             translate_button.click(
                 translate_interface,
-                inputs=[srt_file_input, source_lang_input, target_lang_input],
+                inputs=[srt_file_input, source_lang_input, target_lang_input, window_radius_input],
                 outputs=[translated_file_output, translate_status_output]
             )
             gr.Markdown("""### Notes:

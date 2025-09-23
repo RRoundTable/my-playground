@@ -1,6 +1,6 @@
 import os
 import argparse
-import whisper
+from openai import OpenAI
 from pydub import AudioSegment
 import torch
 import numpy as np
@@ -10,27 +10,91 @@ from pydub.silence import split_on_silence
 
 def transcribe_with_whisper(audio_path: str, model_name: str = "base", language: Optional[str] = None) -> Dict:
     """
-    Transcribe the given audio file using OpenAI's Whisper model.
+    Transcribe the given audio file using OpenAI's Whisper API.
     
     Args:
         audio_path: Path to the audio file
-        model_name: Whisper model size (tiny, base, small, medium, large)
-        language: Language spoken in the audio (e.g., 'en', 'ko'). None for auto-detect.
+        model_name: Ignored for API usage; API model is 'whisper-1'
+        language: Language spoken in the audio. Accepts ISO-639-1 (e.g., 'en', 'ko').
+                  Common names like 'english' or tags like 'en-US' are normalized.
     
     Returns:
-        Dictionary containing transcription results with timestamps
+        Dictionary containing transcription results with timestamps (segments)
     """
-    print(f"Loading Whisper model: {model_name}")
-    model = whisper.load_model(model_name)
-    
-    print(f"Transcribing audio file: {audio_path}")
-    result = model.transcribe(
-        audio_path,
-        verbose=True,
-        word_timestamps=True,
-        language=language if language and language.strip() else None
-    )
-    
+    client = OpenAI()
+
+    def normalize_language_code(lang: Optional[str]) -> Optional[str]:
+        if not lang:
+            return None
+        raw = lang.strip().lower()
+        if not raw:
+            return None
+        # If BCP-47 like en-US, take primary subtag
+        primary = raw.split("-")[0].split("_")[0]
+        # Common name mappings
+        common_map = {
+            "english": "en",
+            "korean": "ko",
+            "korea": "ko",
+            "japanese": "ja",
+            "chinese": "zh",
+            "mandarin": "zh",
+            "cantonese": "zh",
+            "french": "fr",
+            "german": "de",
+            "spanish": "es",
+            "portuguese": "pt",
+            "italian": "it",
+            "russian": "ru",
+            "vietnamese": "vi",
+            "thai": "th",
+            "hindi": "hi",
+            "indonesian": "id",
+            "turkish": "tr",
+            "arabic": "ar",
+            "hebrew": "he",
+            "polish": "pl",
+            "dutch": "nl",
+        }
+        if raw in common_map:
+            return common_map[raw]
+        # If already 2-letter code, use it
+        if len(primary) == 2 and primary.isalpha():
+            return primary
+        # Fallback: None (auto-detect)
+        print(f"Warning: Unrecognized language '{lang}'. Falling back to auto-detect.")
+        return None
+
+    api_language = normalize_language_code(language)
+
+    print("Transcribing via OpenAI API: whisper-1")
+    try:
+        with open(audio_path, "rb") as audio_file:
+            response = client.audio.transcriptions.create(
+                model="whisper-1",
+                file=audio_file,
+                response_format="verbose_json",
+                language=api_language,
+            )
+    except Exception as e:
+        raise RuntimeError(f"OpenAI transcription failed: {e}")
+
+    # Normalize response to a dict compatible with downstream usage
+    # Ensure presence of 'segments' with 'start', 'end', 'text' fields
+    segments = []
+    if getattr(response, "segments", None):
+        for seg in response.segments:
+            segments.append({
+                "start": getattr(seg, "start", 0.0),
+                "end": getattr(seg, "end", 0.0),
+                "text": getattr(seg, "text", "").strip(),
+            })
+
+    result: Dict = {
+        "text": getattr(response, "text", ""),
+        "segments": segments,
+    }
+
     return result
 
 def format_timestamp(seconds: float) -> str:
