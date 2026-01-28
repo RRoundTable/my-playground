@@ -43,10 +43,13 @@ RUN poetry install --no-interaction --no-ansi --no-root --no-dev
 # This assumes your source code is in a 'src' directory in your project root.
 COPY ./src /app/src
 COPY ./models /models
-# 9. Expose the port Gradio runs on (default is 7860)
+# 9. Create Gradio cache directory for file uploads
+RUN mkdir -p /tmp/gradio && chmod 777 /tmp/gradio
+
+# 10. Expose the port Gradio runs on (default is 7860)
 EXPOSE 7860
 
-# 10. Define the command to run the application
+# 11. Define the command to run the application
 # The application (app.py) loads OPENAI_API_KEY from the environment.
 # You'll need to pass this environment variable when running the container, e.g.:
 # docker run -e OPENAI_API_KEY='your_actual_api_key' -p 7860:7860 <your_image_name>

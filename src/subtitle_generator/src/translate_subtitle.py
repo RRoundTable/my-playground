@@ -11,7 +11,7 @@ load_dotenv()
 
 # Define a block size for how many subtitles to process in one API call
 # Default changed to 3 for tighter sliding-window groups
-BLOCK_SIZE = 3
+BLOCK_SIZE = int(os.getenv("BLOCK_SIZE", "100"))
 
 def _read_window_radius_from_env() -> int:
     """
@@ -154,7 +154,7 @@ async def translate_windowed_block(windows: list[dict], source_lang: str, target
         )
 
         completion = await client.chat.completions.create(
-            model="gpt-5-mini",
+            model="gpt-5.1-mini",
             messages=[
                 {"role": "system", "content": system_prompt_content},
                 {"role": "user", "content": api_input_string},
