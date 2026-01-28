@@ -2,7 +2,8 @@ import gradio as gr
 import openai
 import srt
 import asyncio
-# import re # No longer directly needed
+import difflib
+import html
 import os
 from pathlib import Path
 from dotenv import load_dotenv
@@ -326,6 +327,141 @@ async def edit_translation_interface(source_srt_file, translated_srt_file, sourc
         return None, status_updates
 
 
+def _highlight_diff(original: str, modified: str) -> str:
+    """
+    Highlights the differences between original and modified text.
+    Returns HTML with green highlighting for additions/changes.
+    """
+    if original == modified:
+        return html.escape(modified)
+    
+    # Use SequenceMatcher to find differences
+    matcher = difflib.SequenceMatcher(None, original, modified)
+    result = []
+    
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == 'equal':
+            result.append(html.escape(modified[j1:j2]))
+        elif tag == 'replace':
+            result.append(f'<span style="background-color: #90EE90; font-weight: bold;">{html.escape(modified[j1:j2])}</span>')
+        elif tag == 'insert':
+            result.append(f'<span style="background-color: #90EE90; font-weight: bold;">{html.escape(modified[j1:j2])}</span>')
+        elif tag == 'delete':
+            # For deleted content, we don't show it in the modified column
+            pass
+    
+    return ''.join(result)
+
+
+def _parse_srt_file(file_path: str) -> Tuple[Optional[list], str]:
+    """Parse an SRT file and return the list of subtitles or an error message."""
+    if not file_path:
+        return None, "No file provided"
+    
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+            if content.startswith('\ufeff'):
+                content = content[1:]
+            return list(srt.parse(content)), ""
+    except FileNotFoundError:
+        return None, f"File not found: {file_path}"
+    except Exception as e:
+        return None, f"Error parsing file: {e}"
+
+
+def compare_subtitles_interface(source_file, first_trans_file, edited_trans_file):
+    """
+    Compare three SRT files: source, first translation, and edited translation.
+    Returns an HTML table showing all three side-by-side with diff highlighting.
+    """
+    # Parse all three files
+    source_subs, source_err = _parse_srt_file(source_file)
+    first_trans_subs, first_err = _parse_srt_file(first_trans_file)
+    edited_subs, edited_err = _parse_srt_file(edited_trans_file)
+    
+    errors = []
+    if source_err:
+        errors.append(f"Source: {source_err}")
+    if first_err:
+        errors.append(f"First Translation: {first_err}")
+    if edited_err:
+        errors.append(f"Edited Translation: {edited_err}")
+    
+    if errors:
+        return f"<p style='color: red;'>Errors: {'; '.join(errors)}</p>", "\n".join(errors)
+    
+    # Check counts
+    counts = [len(source_subs), len(first_trans_subs), len(edited_subs)]
+    if len(set(counts)) > 1:
+        warning = f"Warning: Subtitle counts differ - Source: {counts[0]}, First Translation: {counts[1]}, Edited: {counts[2]}"
+    else:
+        warning = f"All files have {counts[0]} subtitles."
+    
+    # Build HTML table
+    html_parts = [
+        '<style>',
+        '.diff-table { width: 100%; border-collapse: collapse; font-family: sans-serif; font-size: 13px; }',
+        '.diff-table th { background-color: #4a90d9; color: white; padding: 10px; text-align: left; position: sticky; top: 0; }',
+        '.diff-table td { padding: 8px; border-bottom: 1px solid #ddd; vertical-align: top; }',
+        '.diff-table tr:nth-child(even) { background-color: #f9f9f9; }',
+        '.diff-table tr:hover { background-color: #f1f1f1; }',
+        '.idx-col { width: 5%; text-align: center; font-weight: bold; color: #666; }',
+        '.source-col { width: 30%; }',
+        '.first-col { width: 30%; }',
+        '.edited-col { width: 35%; }',
+        '.changed-row { background-color: #fffacd !important; }',
+        '.timestamp { font-size: 11px; color: #888; display: block; margin-bottom: 4px; }',
+        '</style>',
+        '<div style="max-height: 600px; overflow-y: auto;">',
+        '<table class="diff-table">',
+        '<thead><tr>',
+        '<th class="idx-col">#</th>',
+        '<th class="source-col">Source</th>',
+        '<th class="first-col">First Translation</th>',
+        '<th class="edited-col">Edited Translation</th>',
+        '</tr></thead>',
+        '<tbody>'
+    ]
+    
+    max_len = max(counts)
+    changed_count = 0
+    
+    for i in range(max_len):
+        source_text = source_subs[i].content if i < len(source_subs) else ""
+        first_text = first_trans_subs[i].content if i < len(first_trans_subs) else ""
+        edited_text = edited_subs[i].content if i < len(edited_subs) else ""
+        
+        # Get timestamp from source if available
+        timestamp = ""
+        if i < len(source_subs):
+            start = source_subs[i].start
+            timestamp = f"{start.seconds // 60}:{start.seconds % 60:02d}"
+        
+        # Check if there's a change between first translation and edited
+        has_change = first_text != edited_text
+        if has_change:
+            changed_count += 1
+        
+        row_class = 'changed-row' if has_change else ''
+        
+        # Highlight differences in the edited column
+        edited_highlighted = _highlight_diff(first_text, edited_text) if has_change else html.escape(edited_text)
+        
+        html_parts.append(f'<tr class="{row_class}">')
+        html_parts.append(f'<td class="idx-col">{i + 1}<br><span class="timestamp">{timestamp}</span></td>')
+        html_parts.append(f'<td class="source-col">{html.escape(source_text)}</td>')
+        html_parts.append(f'<td class="first-col">{html.escape(first_text)}</td>')
+        html_parts.append(f'<td class="edited-col">{edited_highlighted}</td>')
+        html_parts.append('</tr>')
+    
+    html_parts.append('</tbody></table></div>')
+    
+    summary = f"{warning}\nChanges detected: {changed_count} out of {max_len} subtitles were modified."
+    
+    return '\n'.join(html_parts), summary
+
+
 # --- Gradio Interface Setup ---
 with gr.Blocks(theme=gr.themes.Soft()) as demo:
     gr.Markdown("# Multilingual Subtitle Toolkit")
@@ -410,6 +546,29 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
   - **Subject restoration**: Re-adds dropped subjects (common in Korean/Japanese)
   - **Redundancy removal**: Eliminates unnecessary repetition
 - Both SRT files must have the same number of subtitles.""")
+
+        with gr.TabItem("Compare Subtitles"):
+            gr.Markdown("Compare source, first translation, and edited translation side-by-side to see the differences.")
+            with gr.Row():
+                with gr.Column(scale=1):
+                    compare_source_input = gr.File(label="Source SRT (Original)", type="filepath", file_types=[".srt"])
+                    compare_first_input = gr.File(label="First Translation SRT", type="filepath", file_types=[".srt"])
+                    compare_edited_input = gr.File(label="Edited Translation SRT", type="filepath", file_types=[".srt"])
+                    compare_button = gr.Button("Compare Subtitles", variant="primary")
+                with gr.Column(scale=2):
+                    compare_summary_output = gr.Textbox(label="Summary", lines=3, interactive=False)
+            
+            compare_html_output = gr.HTML(label="Comparison Result")
+            
+            compare_button.click(
+                compare_subtitles_interface,
+                inputs=[compare_source_input, compare_first_input, compare_edited_input],
+                outputs=[compare_html_output, compare_summary_output]
+            )
+            gr.Markdown("""### Legend:
+- **Yellow rows**: Subtitles that were modified during editing
+- **Green highlighting**: Text that was changed or added in the edited version
+- Scroll the table to see all subtitles""")
 
 if __name__ == "__main__":
     if not os.getenv("OPENAI_API_KEY"):
