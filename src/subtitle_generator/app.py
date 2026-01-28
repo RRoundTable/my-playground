@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 import tempfile # For creating temporary files
-from src.translate_subtitle import translate_subtitle_objects_in_blocks, BLOCK_SIZE, _read_window_radius_from_env # Import shared components
+from src.translate_subtitle import translate_subtitle_objects_in_blocks, edit_translated_subtitles_in_blocks, BLOCK_SIZE, _read_window_radius_from_env # Import shared components
 from src.generate_subtitle import transcribe_chunks_with_offsets, format_timestamp
 from src.vad_onnx import detect_utterances_with_vad, VadConfig
 from typing import Optional, Tuple
@@ -59,7 +59,7 @@ async def process_srt_for_gradio(uploaded_srt_file_path: str, source_lang: str, 
     # Call the imported core processing function
     try:
         final_translated_subtitle_objects, successful_blocks, failed_blocks = await translate_subtitle_objects_in_blocks(
-            original_subs, source_lang, target_lang, client, BLOCK_SIZE, window_radius
+            original_subs, source_lang, target_lang, client, int(BLOCK_SIZE), int(window_radius)
         )
     except ValueError as e:
         return None, f"Configuration error: {e}"
@@ -211,6 +211,121 @@ async def generate_subtitles_interface(audio_file_data, language: str):
     else:
         return None, status_updates
 
+
+async def process_edit_srt_for_gradio(
+    source_srt_path: str,
+    translated_srt_path: str,
+    source_lang: str,
+    target_lang: str,
+    window_radius: int
+) -> Tuple[Optional[str], str]:
+    """
+    Reads source and translated SRT files, edits/refines the translations,
+    and saves the edited version to a temporary file.
+    Returns the path to the edited SRT file and a status message.
+    """
+    if not os.getenv("OPENAI_API_KEY"):
+        return None, "Error: The OPENAI_API_KEY environment variable is not set. Please set it and restart the app."
+
+    try:
+        client = openai.AsyncOpenAI()
+    except openai.OpenAIError as e:
+        error_message = f"Error initializing OpenAI client: {e}. Please make sure your OPENAI_API_KEY is set correctly."
+        print(error_message)
+        return None, error_message
+
+    if not source_srt_path:
+        return None, "Error: No source SRT file provided."
+    if not translated_srt_path:
+        return None, "Error: No translated SRT file provided."
+
+    # Read source SRT
+    try:
+        with open(source_srt_path, 'r', encoding='utf-8') as f:
+            source_content = f.read()
+            if source_content.startswith('\ufeff'):
+                source_content = source_content[1:]
+            source_subs = list(srt.parse(source_content))
+    except FileNotFoundError:
+        return None, f"Error: Source SRT file not found at {source_srt_path}"
+    except Exception as e:
+        return None, f"Error reading or parsing source SRT file: {e}"
+
+    # Read translated SRT
+    try:
+        with open(translated_srt_path, 'r', encoding='utf-8') as f:
+            translated_content = f.read()
+            if translated_content.startswith('\ufeff'):
+                translated_content = translated_content[1:]
+            translated_subs = list(srt.parse(translated_content))
+    except FileNotFoundError:
+        return None, f"Error: Translated SRT file not found at {translated_srt_path}"
+    except Exception as e:
+        return None, f"Error reading or parsing translated SRT file: {e}"
+
+    if not source_subs:
+        return None, "No subtitles found in the source file."
+    if not translated_subs:
+        return None, "No subtitles found in the translated file."
+
+    if len(source_subs) != len(translated_subs):
+        return None, f"Error: Subtitle count mismatch. Source has {len(source_subs)} subtitles, translated has {len(translated_subs)}. They must match."
+
+    status_message = f"Editing {len(source_subs)} subtitles from {source_lang} to {target_lang} in blocks of {BLOCK_SIZE} with window radius {window_radius}..."
+    print(status_message)
+
+    try:
+        final_edited_subtitle_objects, successful_blocks, failed_blocks = await edit_translated_subtitles_in_blocks(
+            source_subs, translated_subs, source_lang, target_lang, client, int(BLOCK_SIZE), int(window_radius)
+        )
+    except ValueError as e:
+        return None, f"Configuration error: {e}"
+
+    block_summary = f"Block processing summary: {successful_blocks} successfully processed, {failed_blocks} blocks failed."
+    print(block_summary)
+
+    total_summary = f"Total subtitles edited: {len(final_edited_subtitle_objects)} out of {len(source_subs)} original subtitles."
+    print(total_summary)
+
+    if len(final_edited_subtitle_objects) != len(source_subs):
+        critical_error_msg = f"CRITICAL ERROR: Final subtitle count ({len(final_edited_subtitle_objects)}) does not match original count ({len(source_subs)}). Aborting file write."
+        print(critical_error_msg)
+        return None, critical_error_msg
+
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".srt", encoding="utf-8") as tmp_file:
+            tmp_file.write(srt.compose(final_edited_subtitle_objects))
+            temp_file_path = tmp_file.name
+
+        success_message = f"Editing complete. Edited file generated. {block_summary} {total_summary}"
+        print(success_message)
+        return temp_file_path, success_message
+    except Exception as e:
+        error_writing_msg = f"Error writing edited SRT to temporary file: {e}"
+        print(error_writing_msg)
+        return None, error_writing_msg
+
+
+async def edit_translation_interface(source_srt_file, translated_srt_file, source_language, target_language, window_radius):
+    if not source_srt_file:
+        return None, "Please upload the source SRT file."
+    if not translated_srt_file:
+        return None, "Please upload the translated SRT file."
+
+    status_updates = "Starting translation editing...\n"
+
+    edited_file_path, message = await process_edit_srt_for_gradio(
+        source_srt_file, translated_srt_file, source_language, target_language, int(window_radius)
+    )
+
+    status_updates += message
+
+    if edited_file_path:
+        return edited_file_path, status_updates
+    else:
+        return None, status_updates
+
+
 # --- Gradio Interface Setup ---
 with gr.Blocks(theme=gr.themes.Soft()) as demo:
     gr.Markdown("# Multilingual Subtitle Toolkit")
@@ -268,6 +383,33 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
 - Ensure your `OPENAI_API_KEY` environment variable is set.
 - The accuracy of generated subtitles depends on the audio quality and the Whisper model.
 - Processing time varies with audio length.""")
+
+        with gr.TabItem("Edit Translation"):
+            gr.Markdown("Upload your source and translated SRT files to refine the translation for consistency, natural phrasing, restored subjects, and reduced redundancy.")
+            with gr.Row():
+                with gr.Column(scale=1):
+                    edit_source_srt_input = gr.File(label="Upload Source SRT File", type="filepath", file_types=[".srt"])
+                    edit_translated_srt_input = gr.File(label="Upload Translated SRT File", type="filepath", file_types=[".srt"])
+                    edit_source_lang_input = gr.Textbox(label="Source Language", value="Korean")
+                    edit_target_lang_input = gr.Textbox(label="Target Language", value="English")
+                    edit_window_radius_input = gr.Slider(label="Window Radius", minimum=1, maximum=8, step=1, value=ENV_WINDOW_RADIUS_DEFAULT, info="Number of context subtitles on each side")
+                    edit_button = gr.Button("Edit Translation", variant="primary")
+                with gr.Column(scale=1):
+                    edit_status_output = gr.Textbox(label="Editing Status / Log", lines=10, interactive=False, autoscroll=True)
+                    edited_file_output = gr.File(label="Download Edited SRT")
+
+            edit_button.click(
+                edit_translation_interface,
+                inputs=[edit_source_srt_input, edit_translated_srt_input, edit_source_lang_input, edit_target_lang_input, edit_window_radius_input],
+                outputs=[edited_file_output, edit_status_output]
+            )
+            gr.Markdown("""### Notes:
+- This feature refines machine translations by improving:
+  - **Consistency**: Uniform terminology and style
+  - **Natural phrasing**: Sense-for-sense rather than literal translation
+  - **Subject restoration**: Re-adds dropped subjects (common in Korean/Japanese)
+  - **Redundancy removal**: Eliminates unnecessary repetition
+- Both SRT files must have the same number of subtitles.""")
 
 if __name__ == "__main__":
     if not os.getenv("OPENAI_API_KEY"):

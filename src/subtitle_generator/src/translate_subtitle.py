@@ -129,6 +129,122 @@ def _format_compacted_block_for_api(all_subs: list[srt.Subtitle], target_indices
 
     return "\n".join(lines)
 
+def _format_edit_block_for_api(
+    source_subs: list[srt.Subtitle],
+    translated_subs: list[srt.Subtitle],
+    target_indices: list[int],
+    radius: int
+) -> str:
+    """
+    Formats source and translated subtitle pairs for the editing API.
+    Includes shared context and paired source/translated lines for each target.
+    """
+    if not target_indices:
+        return ""
+
+    total = len(source_subs)
+    first_target = target_indices[0]
+    last_target = target_indices[-1]
+    context_start = max(0, first_target - max(0, radius))
+    context_end = min(total - 1, last_target + max(0, radius))
+
+    # Build shared context (source lines outside target indices for reference)
+    target_set = set(target_indices)
+    shared_context_lines: list[str] = []
+    for idx in range(context_start, context_end + 1):
+        if idx in target_set:
+            continue
+        source_text = _normalize_single_line(source_subs[idx].content)
+        translated_text = _normalize_single_line(translated_subs[idx].content) if idx < len(translated_subs) else ""
+        shared_context_lines.append(f"[{source_text}] -> [{translated_text}]")
+
+    # Compose final message
+    lines: list[str] = []
+    lines.append("Shared Context (source -> translation):")
+    for text in shared_context_lines:
+        lines.append(f"- {text}")
+    lines.append("---")
+
+    for i, idx in enumerate(target_indices, start=1):
+        source_text = _normalize_single_line(source_subs[idx].content)
+        translated_text = _normalize_single_line(translated_subs[idx].content) if idx < len(translated_subs) else ""
+        lines.append(f"Item {i}:")
+        lines.append(f"Source: {source_text}")
+        lines.append(f"Translation: {translated_text}")
+        lines.append("---")
+
+    return "\n".join(lines)
+
+
+async def edit_compacted_block(
+    api_input_string: str,
+    expected_items: int,
+    source_lang: str,
+    target_lang: str,
+    client: openai.AsyncOpenAI
+) -> list[str]:
+    """
+    Sends a block of source/translated pairs to the LLM for editing/refinement.
+    Returns a list of edited translations.
+    """
+    if not api_input_string or expected_items <= 0:
+        return []
+
+    try:
+        system_prompt_content = (
+            f"You are a professional subtitle editor/proofreader. Your task is to refine machine-translated subtitles from {source_lang} to {target_lang}. "
+            f"You will receive pairs of source text and their machine translations. "
+            f"Edit each translation to improve it based on these criteria:\n"
+            f"1. **Consistency**: Ensure consistent terminology, names, and style across all subtitles.\n"
+            f"2. **Sense-for-sense**: Ensure the translation conveys the meaning naturally, not word-for-word literal translation.\n"
+            f"3. **Restore subjects**: Many languages (Korean, Japanese, etc.) drop subjects. Restore implicit subjects (I, you, he, she, they, we) when needed for clarity in {target_lang}.\n"
+            f"4. **Remove redundancies**: Eliminate unnecessary repetition or filler words that don't add meaning.\n\n"
+            f"Rules:\n"
+            f"- Return exactly {expected_items} lines (one per Item), in order.\n"
+            f"- Each line must contain only the edited translation text (no numbering, bullets, or commentary).\n"
+            f"- If a translation is already good, return it unchanged.\n"
+            f"- Do not insert blank lines. Replace any internal line breaks with spaces."
+        )
+
+        completion = await client.chat.completions.create(
+            model="gpt-5-mini",
+            messages=[
+                {"role": "system", "content": system_prompt_content},
+                {"role": "user", "content": api_input_string},
+            ],
+        )
+
+        raw_edited_text = completion.choices[0].message.content.strip() if completion.choices[0].message else ""
+        edited_lines = raw_edited_text.split('\n')
+        parsed_edits: list[str] = []
+        for line_str in edited_lines:
+            processed_line = line_str.strip()
+            if not processed_line:
+                continue
+            # Remove any numbering prefixes like "1. " or "1) "
+            text_to_clean = ""
+            match = re.match(r"^(\d+)[\.\)]\s*(.*)", processed_line)
+            if match:
+                text_to_clean = match.group(2).strip()
+            else:
+                text_to_clean = processed_line
+            final_text = re.sub(r"^\d+[\.\)]\s*", "", text_to_clean).strip()
+            if final_text:
+                parsed_edits.append(final_text)
+
+        if len(parsed_edits) > expected_items:
+            parsed_edits = parsed_edits[:expected_items]
+
+        if len(parsed_edits) < expected_items:
+            print(f"Warning: Mismatch in edit block count. Expected {expected_items}, got {len(parsed_edits)}. Filling missing with empty strings.")
+            parsed_edits.extend([""] * (expected_items - len(parsed_edits)))
+
+        return parsed_edits
+    except Exception as e:
+        print(f"Error during editing block... Error: {e}")
+        return [""] * expected_items
+
+
 async def translate_windowed_block(windows: list[dict], source_lang: str, target_lang: str, client: openai.AsyncOpenAI) -> list[str]:
     """
     Translates only the Target line for each provided window, using surrounding Prev/Next as context.
@@ -337,6 +453,91 @@ async def translate_subtitle_objects_in_blocks(original_subs: list[srt.Subtitle]
 
 
     return final_translated_subtitle_objects, successful_blocks, failed_blocks
+
+
+async def edit_translated_subtitles_in_blocks(
+    source_subs: list[srt.Subtitle],
+    translated_subs: list[srt.Subtitle],
+    source_lang: str,
+    target_lang: str,
+    client: openai.AsyncOpenAI,
+    block_processing_size: int,
+    window_radius: int
+) -> tuple[list[srt.Subtitle], int, int]:
+    """
+    Processes source and translated subtitle pairs in blocks, edits/refines the translations,
+    and returns the results.
+    
+    Focuses on:
+    - Consistency in terminology and style
+    - Sense-for-sense translation (not literal)
+    - Restoring dropped subjects
+    - Removing redundancies
+    """
+    if len(source_subs) != len(translated_subs):
+        raise ValueError(f"Source and translated subtitle counts must match. Got {len(source_subs)} source and {len(translated_subs)} translated.")
+    
+    if not window_radius or window_radius <= 0:
+        raise ValueError("window_radius must be > 0 for editing")
+    
+    tasks = []
+    source_subs_blocks = []
+    translated_subs_blocks = []
+    final_edited_subtitle_objects = []
+    successful_blocks = 0
+    failed_blocks = 0
+
+    for i in range(0, len(source_subs), block_processing_size):
+        block_of_source_subs = source_subs[i:i + block_processing_size]
+        block_of_translated_subs = translated_subs[i:i + block_processing_size]
+        source_subs_blocks.append(block_of_source_subs)
+        translated_subs_blocks.append(block_of_translated_subs)
+
+        target_indices = list(range(i, i + len(block_of_source_subs)))
+        api_input_string = _format_edit_block_for_api(source_subs, translated_subs, target_indices, window_radius)
+
+        # Wrap in a coroutine for async gathering
+        async def _run_edit(api_input=api_input_string, n_items=len(target_indices)):
+            return await edit_compacted_block(api_input, n_items, source_lang, target_lang, client)
+
+        tasks.append(_run_edit())
+
+    if tasks:
+        block_edit_results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        for i, result_for_block in enumerate(block_edit_results):
+            current_source_block = source_subs_blocks[i]
+            current_translated_block = translated_subs_blocks[i]
+
+            if isinstance(result_for_block, Exception):
+                print(f"Error editing block starting with subtitle index {current_source_block[0].index if current_source_block else 'N/A'}. Using original translations. Error: {result_for_block}")
+                final_edited_subtitle_objects.extend(current_translated_block)
+                failed_blocks += 1
+            elif isinstance(result_for_block, list) and len(result_for_block) == len(current_source_block):
+                successful_blocks += 1
+                for original_sub_obj, edited_text_content in zip(current_translated_block, result_for_block):
+                    # Use edited text if non-empty, otherwise keep original translation
+                    content_value = edited_text_content if edited_text_content else original_sub_obj.content
+                    final_edited_subtitle_objects.append(srt.Subtitle(
+                        index=original_sub_obj.index,
+                        start=original_sub_obj.start,
+                        end=original_sub_obj.end,
+                        content=content_value,
+                        proprietary=original_sub_obj.proprietary
+                    ))
+            else:
+                print(f"Unexpected result type or mismatched count for edit block starting with subtitle index {current_source_block[0].index if current_source_block else 'N/A'}. Type: {type(result_for_block)}. Using original translations.")
+                final_edited_subtitle_objects.extend(current_translated_block)
+                failed_blocks += 1
+    elif not source_subs:
+        pass  # No subtitles to process
+    else:
+        print("Warning: Subtitles present but no edit tasks generated. Using original translations.")
+        final_edited_subtitle_objects.extend(translated_subs)
+        failed_blocks = len(source_subs) // block_processing_size + (1 if len(source_subs) % block_processing_size > 0 else 0) if block_processing_size > 0 else 0
+
+    return final_edited_subtitle_objects, successful_blocks, failed_blocks
+
 
 async def translate_srt_file(srt_file_path: str, source_lang: str, target_lang: str, window_radius: int) -> None:
     """
