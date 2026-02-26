@@ -1,9 +1,10 @@
 import argparse
+import json
 import os
 import openai
 import srt
 import asyncio
-import re # Added import
+import re
 from pathlib import Path
 from dotenv import load_dotenv
 from .subtitle_utils import wrap_long_subtitles
@@ -12,14 +13,14 @@ load_dotenv()
 
 # Define a block size for how many subtitles to process in one API call
 # Default changed to 3 for tighter sliding-window groups
-BLOCK_SIZE = int(os.getenv("BLOCK_SIZE", "100"))
+BLOCK_SIZE = int(os.getenv("BLOCK_SIZE", "30"))
 
 def _read_window_radius_from_env() -> int:
     """
     Reads sliding window radius from the SUB_WINDOW_RADIUS environment variable.
     Falls back to default of 2 if unset or invalid.
     """
-    env_value = os.getenv("SUB_WINDOW_RADIUS", "5").strip()
+    env_value = os.getenv("SUB_WINDOW_RADIUS", "10").strip()
     try:
         value = int(env_value)
         return max(0, value)
@@ -31,6 +32,60 @@ def _normalize_single_line(text: str) -> str:
     Normalizes a subtitle text to a single line for prompt stability.
     """
     return text.replace('\n', ' ').strip()
+
+
+def _build_translations_schema(n: int) -> dict:
+    """
+    Build a JSON schema for structured output that enforces exactly N translations
+    in order. Uses minItems/maxItems to guarantee the array length.
+    """
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "subtitle_translations",
+            "strict": True,
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "translations": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "minItems": n,
+                        "maxItems": n,
+                    }
+                },
+                "required": ["translations"],
+                "additionalProperties": False,
+            },
+        },
+    }
+
+
+def _parse_structured_response(raw_text: str, expected_n: int) -> list[str]:
+    """
+    Parse structured JSON response from the API.
+    Expected format: {"translations": ["text1", "text2", ...]}
+    """
+    if not raw_text:
+        return [""] * expected_n
+
+    try:
+        data = json.loads(raw_text)
+        translations = data.get("translations", [])
+    except (json.JSONDecodeError, AttributeError) as e:
+        print(f"Warning: Failed to parse structured response as JSON: {e}. Returning empty translations.")
+        return [""] * expected_n
+
+    if len(translations) != expected_n:
+        print(f"Warning: Structured output returned {len(translations)} translations, expected {expected_n}.")
+
+    # Pad or truncate to exact expected count
+    if len(translations) < expected_n:
+        translations.extend([""] * (expected_n - len(translations)))
+    elif len(translations) > expected_n:
+        translations = translations[:expected_n]
+
+    return translations
 
 def _build_window_for_index(all_subs: list[srt.Subtitle], target_index: int, radius: int) -> dict:
     """
@@ -186,7 +241,7 @@ async def edit_compacted_block(
 ) -> list[str]:
     """
     Sends a block of source/translated pairs to the LLM for editing/refinement.
-    Returns a list of edited translations.
+    Returns a list of edited translations using structured JSON output.
     """
     if not api_input_string or expected_items <= 0:
         return []
@@ -201,10 +256,9 @@ async def edit_compacted_block(
             f"3. **Restore subjects**: Many languages (Korean, Japanese, etc.) drop subjects. Restore implicit subjects (I, you, he, she, they, we) when needed for clarity in {target_lang}.\n"
             f"4. **Remove redundancies**: Eliminate unnecessary repetition or filler words that don't add meaning.\n\n"
             f"Rules:\n"
-            f"- Return exactly {expected_items} lines (one per Item), in order.\n"
-            f"- Each line must contain only the edited translation text (no numbering, bullets, or commentary).\n"
+            f"- Return exactly {expected_items} edited translations in the \"translations\" array, in the same order as the Items.\n"
             f"- If a translation is already good, return it unchanged.\n"
-            f"- Do not insert blank lines. Replace any internal line breaks with spaces."
+            f"- Each translation must be a single string (no line breaks)."
         )
 
         completion = await client.chat.completions.create(
@@ -213,34 +267,11 @@ async def edit_compacted_block(
                 {"role": "system", "content": system_prompt_content},
                 {"role": "user", "content": api_input_string},
             ],
+            response_format=_build_translations_schema(expected_items),
         )
 
-        raw_edited_text = completion.choices[0].message.content.strip() if completion.choices[0].message else ""
-        edited_lines = raw_edited_text.split('\n')
-        parsed_edits: list[str] = []
-        for line_str in edited_lines:
-            processed_line = line_str.strip()
-            if not processed_line:
-                continue
-            # Remove any numbering prefixes like "1. " or "1) "
-            text_to_clean = ""
-            match = re.match(r"^(\d+)[\.\)]\s*(.*)", processed_line)
-            if match:
-                text_to_clean = match.group(2).strip()
-            else:
-                text_to_clean = processed_line
-            final_text = re.sub(r"^\d+[\.\)]\s*", "", text_to_clean).strip()
-            if final_text:
-                parsed_edits.append(final_text)
-
-        if len(parsed_edits) > expected_items:
-            parsed_edits = parsed_edits[:expected_items]
-
-        if len(parsed_edits) < expected_items:
-            print(f"Warning: Mismatch in edit block count. Expected {expected_items}, got {len(parsed_edits)}. Filling missing with empty strings.")
-            parsed_edits.extend([""] * (expected_items - len(parsed_edits)))
-
-        return parsed_edits
+        raw_text = completion.choices[0].message.content or ""
+        return _parse_structured_response(raw_text, expected_items)
     except Exception as e:
         print(f"Error during editing block... Error: {e}")
         return [""] * expected_items
@@ -254,20 +285,18 @@ async def translate_windowed_block(windows: list[dict], source_lang: str, target
     if not windows:
         return []
 
+    expected_n = len(windows)
     api_input_string = _format_windows_for_api(windows)
-    print("#"*100)
-    print(api_input_string)
-    print("#"*100)
     try:
         system_prompt_content = (
-            f"You are a youtube subtitle translator/localizer. Translate the Korean text into natural American English for everyday use by U.S. adults in their 20s–40s."
-            f"Use common American phrasing with contractions"
-            f"Use U.S. conventions (Oct 5; a.m./p.m.; $, miles/feet)."
+            f"You are a youtube subtitle translator/localizer. Translate the Korean text into natural American English for everyday use by U.S. adults in their 20s–40s. "
+            f"Use common American phrasing with contractions. "
+            f"Use U.S. conventions (Oct 5; a.m./p.m.; $, miles/feet). "
             f"Each Item presents subtitles in three sections: 'Previous Context', 'Target Subtitle', and 'Future Context'. "
             f"Your task is to: "
             f"1. Translate only the text of the 'Target Subtitle' for each Item from {source_lang} to {target_lang}, using the context sections only to inform meaning, tone, and disambiguation. "
-            f"2. Return exactly N lines (N = number of Items), in order. Each line must contain only the translation text (no numbering, bullets, or extra commentary). "
-            f"3. Do not insert blank lines. If a translation would be empty, repeat the Target Subtitle unchanged. Replace any internal line breaks with spaces so each translation is a single line."
+            f"2. Return exactly {expected_n} translations in the \"translations\" array, in the same order as the Items. "
+            f"3. If a translation would be empty, repeat the Target Subtitle unchanged. Each translation must be a single string (no line breaks)."
         )
 
         completion = await client.chat.completions.create(
@@ -276,37 +305,11 @@ async def translate_windowed_block(windows: list[dict], source_lang: str, target
                 {"role": "system", "content": system_prompt_content},
                 {"role": "user", "content": api_input_string},
             ],
+            response_format=_build_translations_schema(expected_n),
         )
 
-        raw_translated_text = completion.choices[0].message.content.strip() if completion.choices[0].message else ""
-        print("#"*100, "raw_translated_text", "#"*100)
-        print(raw_translated_text) 
-        translated_lines = raw_translated_text.split('\n')
-        parsed_translations: list[str] = []
-        for line_str in translated_lines:
-            processed_line = line_str.strip()
-            if not processed_line:
-                continue
-            text_to_clean = ""
-            match = re.match(r"^(\d+)\.\s*(.*)", processed_line)
-            if match:
-                text_to_clean = match.group(2).strip()
-            else:
-                text_to_clean = processed_line
-            final_text = re.sub(r"^\d+\.\s*", "", text_to_clean).strip()
-            if final_text:
-                parsed_translations.append(final_text)
-
-        expected_n = len(windows)
-        if len(parsed_translations) > expected_n:
-            parsed_translations = parsed_translations[:expected_n]
-
-        if len(parsed_translations) < expected_n:
-            print(f"Warning: Mismatch in windowed block count. Expected {expected_n}, got {len(parsed_translations)}. Filling missing with original targets.")
-            missing = [w.get("target", "") for w in windows[len(parsed_translations):]]
-            parsed_translations.extend(missing)
-
-        return parsed_translations
+        raw_text = completion.choices[0].message.content or ""
+        return _parse_structured_response(raw_text, expected_n)
     except Exception as e:
         print(f"Error during windowed translation for block starting with target '{windows[0].get('target', '') if windows else 'N/A'}'... Error: {e}")
         return [w.get("target", "") for w in windows]
@@ -314,21 +317,21 @@ async def translate_windowed_block(windows: list[dict], source_lang: str, target
 async def translate_compacted_block(api_input_string: str, expected_items: int, source_lang: str, target_lang: str, client: openai.AsyncOpenAI) -> list[str]:
     """
     Translates only the Target lines for a compacted block input that contains a Shared Context and multiple Items.
-    Returns a list of length expected_items, truncating or filling with originals if count mismatches.
+    Returns a list of length expected_items using structured JSON output.
     """
     if not api_input_string or expected_items <= 0:
         return []
 
     try:
         system_prompt_content = (
-            f"You are a youtube subtitle translator/localizer. Translate the Korean text into natural American English for everyday use by U.S. adults in their 20s–40s."
-            f"Use common American phrasing with contractions"
-            f"Use U.S. conventions (Oct 5; a.m./p.m.; $, miles/feet)."
+            f"You are a youtube subtitle translator/localizer. Translate the Korean text into natural American English for everyday use by U.S. adults in their 20s–40s. "
+            f"Use common American phrasing with contractions. "
+            f"Use U.S. conventions (Oct 5; a.m./p.m.; $, miles/feet). "
             f"You will be given a Shared Context followed by Items. Each Item contains only a 'Target Subtitle'. "
             f"Your task is to: "
             f"1. Translate only each 'Target Subtitle' from {source_lang} to {target_lang}, using the Shared Context solely for meaning, tone, and disambiguation. "
-            f"2. Return exactly N lines (N = number of Items), in order. Each line must contain only the translation text (no numbering, bullets, or extra commentary). "
-            f"3. Do not insert blank lines. If a translation would be empty, repeat the Target Subtitle unchanged. Replace any internal line breaks with spaces so each translation is a single line."
+            f"2. Return exactly {expected_items} translations in the \"translations\" array, in the same order as the Items. "
+            f"3. If a translation would be empty, repeat the Target Subtitle unchanged. Each translation must be a single string (no line breaks)."
         )
 
         completion = await client.chat.completions.create(
@@ -337,34 +340,11 @@ async def translate_compacted_block(api_input_string: str, expected_items: int, 
                 {"role": "system", "content": system_prompt_content},
                 {"role": "user", "content": api_input_string},
             ],
+            response_format=_build_translations_schema(expected_items),
         )
 
-        raw_translated_text = completion.choices[0].message.content.strip() if completion.choices[0].message else ""
-        translated_lines = raw_translated_text.split('\n')
-        parsed_translations: list[str] = []
-        for line_str in translated_lines:
-            processed_line = line_str.strip()
-            if not processed_line:
-                continue
-            text_to_clean = ""
-            match = re.match(r"^(\d+)\.\s*(.*)", processed_line)
-            if match:
-                text_to_clean = match.group(2).strip()
-            else:
-                text_to_clean = processed_line
-            final_text = re.sub(r"^\d+\.\s*", "", text_to_clean).strip()
-            if final_text:
-                parsed_translations.append(final_text)
-
-        expected_n = expected_items
-        if len(parsed_translations) > expected_n:
-            parsed_translations = parsed_translations[:expected_n]
-        if len(parsed_translations) < expected_n:
-            print(f"Warning: Mismatch in compacted block count. Expected {expected_n}, got {len(parsed_translations)}. Filling missing with placeholders.")
-            # Fill with empty strings; caller may decide to backfill with originals if needed
-            parsed_translations.extend([""] * (expected_n - len(parsed_translations)))
-
-        return parsed_translations
+        raw_text = completion.choices[0].message.content or ""
+        return _parse_structured_response(raw_text, expected_items)
     except Exception as e:
         print(f"Error during compacted translation block... Error: {e}")
         return [""] * expected_items

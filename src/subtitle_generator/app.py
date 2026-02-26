@@ -157,7 +157,7 @@ async def generate_subtitles_from_audio_for_gradio(audio_file_path: str, languag
             tmp_file.write(srt_content)
             temp_file_path = tmp_file.name
 
-        success_message = f"Subtitle generation complete. {len(subtitle_objects)} subtitles generated (from {original_count} segments)."
+        success_message = f"Subtitle generation complete. {len(subtitle_objects)} subtitles generated (from {len(transcription_result['segments'])} segments)."
         print(success_message)
         return temp_file_path, success_message
     except Exception as e:

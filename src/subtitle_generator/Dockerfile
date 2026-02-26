@@ -11,7 +11,7 @@ ENV PYTHONUNBUFFERED=1 \
 ENV PATH="$POETRY_HOME/bin:$PATH"
 
 # 3. Install system dependencies
-# ffmpeg is required for openai-whisper and pydub
+# ffmpeg is required for pydub audio processing
 # curl is used to download the Poetry installer
 RUN apt-get update && \
     apt-get install -y --no-install-recommends ffmpeg curl && \
@@ -36,13 +36,13 @@ COPY poetry.lock /app/poetry.lock
 # pyproject.toml or poetry.lock changes.
 # --no-root: Do not install the project package itself.
 # --no-dev: Skip development dependencies.
-# Ensure your pyproject.toml lists all necessary dependencies like gradio, openai-whisper, etc.
+# Ensure your pyproject.toml lists all necessary dependencies like gradio, openai, etc.
 RUN poetry install --no-interaction --no-ansi --no-root --no-dev
 
 # 8. Copy application code
 # This assumes your source code is in a 'src' directory in your project root.
 COPY ./src /app/src
-COPY ./models /models
+
 # 9. Create Gradio cache directory for file uploads
 RUN mkdir -p /tmp/gradio && chmod 777 /tmp/gradio
 
