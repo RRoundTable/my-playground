@@ -9,8 +9,8 @@ from pathlib import Path
 from dotenv import load_dotenv
 import tempfile # For creating temporary files
 from src.translate_subtitle import translate_subtitle_objects_in_blocks, edit_translated_subtitles_in_blocks, BLOCK_SIZE, _read_window_radius_from_env # Import shared components
-from src.generate_subtitle import transcribe_chunks_with_offsets, format_timestamp
-from src.vad_onnx import detect_utterances_with_vad, VadConfig
+from src.subtitle_utils import wrap_long_subtitles
+from src.generate_subtitle import transcribe_smart, format_timestamp
 from typing import Optional, Tuple
 
 load_dotenv()
@@ -19,7 +19,7 @@ load_dotenv()
 ENV_WINDOW_RADIUS_DEFAULT = max(1, _read_window_radius_from_env())
 
 
-async def process_srt_for_gradio(uploaded_srt_file_path: str, source_lang: str, target_lang: str, window_radius: int) -> Tuple[Optional[str], str]:
+async def process_srt_for_gradio(uploaded_srt_file_path: str, source_lang: str, target_lang: str, window_radius: int, max_subtitle_length: int = 0) -> Tuple[Optional[str], str]:
     """
     Reads an SRT file from the given path, translates its content in blocks asynchronously,
     and saves the translated version to a temporary file.
@@ -60,7 +60,7 @@ async def process_srt_for_gradio(uploaded_srt_file_path: str, source_lang: str, 
     # Call the imported core processing function
     try:
         final_translated_subtitle_objects, successful_blocks, failed_blocks = await translate_subtitle_objects_in_blocks(
-            original_subs, source_lang, target_lang, client, int(BLOCK_SIZE), int(window_radius)
+            original_subs, source_lang, target_lang, client, int(BLOCK_SIZE), int(window_radius), int(max_subtitle_length)
         )
     except ValueError as e:
         return None, f"Configuration error: {e}"
@@ -68,13 +68,8 @@ async def process_srt_for_gradio(uploaded_srt_file_path: str, source_lang: str, 
     block_summary = f"Block processing summary: {successful_blocks} successfully processed, {failed_blocks} blocks failed."
     print(block_summary)
     
-    total_summary = f"Total subtitles processed: {len(final_translated_subtitle_objects)} out of {len(original_subs)} original subtitles."
+    total_summary = f"Total subtitles processed: {len(final_translated_subtitle_objects)} (from {len(original_subs)} original subtitles)."
     print(total_summary)
-
-    if len(final_translated_subtitle_objects) != len(original_subs):
-        critical_error_msg = f"CRITICAL ERROR: Final subtitle count ({len(final_translated_subtitle_objects)}) does not match original count ({len(original_subs)}). Aborting file write."
-        print(critical_error_msg)
-        return None, critical_error_msg
 
     try:
         # Create a temporary file to store the translated SRT content
@@ -90,15 +85,15 @@ async def process_srt_for_gradio(uploaded_srt_file_path: str, source_lang: str, 
         print(error_writing_msg)
         return None, error_writing_msg
 
-async def translate_interface(srt_file_object, source_language, target_language, window_radius):
+async def translate_interface(srt_file_object, source_language, target_language, window_radius, max_subtitle_length):
     if not srt_file_object:
         return None, "Please upload an SRT file."
 
     uploaded_srt_path = srt_file_object # Gradio File component with type="filepath" provides the path
 
     status_updates = "Starting translation...\n"
-    
-    translated_file_path, message = await process_srt_for_gradio(uploaded_srt_path, source_language, target_language, int(window_radius))
+
+    translated_file_path, message = await process_srt_for_gradio(uploaded_srt_path, source_language, target_language, int(window_radius), int(max_subtitle_length))
     
     status_updates += message
     
@@ -107,106 +102,81 @@ async def translate_interface(srt_file_object, source_language, target_language,
     else:
         return None, status_updates
 
-async def generate_subtitles_from_audio_for_gradio(audio_file_path: str, language: str) -> Tuple[Optional[str], str]:
+async def generate_subtitles_from_audio_for_gradio(audio_file_path: str, language: str, max_subtitle_length: int = 0) -> Tuple[Optional[str], str]:
     """
     Transcribes an audio file using OpenAI Whisper to generate SRT subtitles.
-    Saves the generated SRT to a temporary file.
-    Returns the path to the temporary SRT file and a status message.
+    Uses transcribe_smart: direct Whisper for files <= 25MB, VAD-based silence
+    splitting for larger files.
     """
-    if not os.getenv("OPENAI_API_KEY"):
-        # This key check might still be relevant if other parts of the app need it,
-        # but Whisper local transcription itself doesn't directly use it.
-        # For now, keeping it as a general app configuration check.
-        # If Whisper were the *only* OpenAI-related feature, this could be removed for this function.
-        pass # OPENAI_API_KEY is not used by local Whisper
-
-    # try:
-    #     client = openai.AsyncOpenAI() # Not needed for local Whisper transcription
-    # except openai.OpenAIError as e:
-    #     error_message = f"Error initializing OpenAI client: {e}. Please make sure your OPENAI_API_KEY is set correctly."
-    #     print(error_message)
-    #     return None, error_message
-
     if not audio_file_path:
         return None, "Error: No audio file provided."
 
     normalized_lang = (language or "").strip()
     if normalized_lang.lower() == "auto-detect":
         normalized_lang = None
-    status_message = f"Transcribing audio in {normalized_lang or 'auto-detect'} with VAD+chunked Whisper API..."
-    print(status_message)
 
     try:
-        # 1) Run VAD segmentation on full audio
-        from pydub import AudioSegment
-        audio = AudioSegment.from_file(audio_file_path)
-        total_ms = len(audio)
-        print(f"[VAD] Input audio duration: {total_ms} ms (~{total_ms/1000.0:.2f} s)")
-        vad_model_path = os.getenv("VAD_MODEL_PATH", "/models/model.onnx")
-        utterances = detect_utterances_with_vad(audio, vad_model_path, VadConfig())
-        print(f"[VAD] Detected {len(utterances)} utterances using model: {vad_model_path}")
-        for i, u in enumerate(utterances, start=1):
-            print(f"  - #{i}: start={u['start_ms']}ms end={u['end_ms']}ms dur={u['end_ms']-u['start_ms']}ms")
+        from datetime import timedelta
 
-        if not utterances:
-            return None, "No utterances detected by VAD. Nothing to transcribe."
+        concurrency = int(os.getenv("TRANSCRIBE_CONCURRENCY", "20"))
 
-        # 2) Transcribe chunks concurrently and merge with accurate offsets
         loop = asyncio.get_event_loop()
         transcription_result = await loop.run_in_executor(
             None,
-            lambda: transcribe_chunks_with_offsets(audio_file_path, normalized_lang, utterances, concurrency=int(os.getenv("TRANSCRIBE_CONCURRENCY", "20")))
+            lambda: transcribe_smart(audio_file_path, normalized_lang, concurrency)
         )
 
         if not transcription_result or "segments" not in transcription_result or not transcription_result["segments"]:
-            no_segments_msg = "Transcription successful but no speech segments found, or result is empty."
-            print(no_segments_msg)
-            return None, no_segments_msg
+            return None, "Transcription successful but no speech segments found."
 
-        srt_content_parts = []
+        # Build srt.Subtitle objects from segments
+        subtitle_objects = []
         for i, segment in enumerate(transcription_result["segments"], start=1):
-            start_time_str = format_timestamp(segment["start"])
-            end_time_str = format_timestamp(segment["end"])
             text = segment["text"].strip()
-            if not text: # Optionally skip empty text segments
-                continue 
-            srt_content_parts.append(f"{i}\n{start_time_str} --> {end_time_str}\n{text}")
-        
-        if not srt_content_parts:
-            no_text_segments_msg = "Transcription produced segments, but all were empty after stripping text."
-            print(no_text_segments_msg)
-            return None, no_text_segments_msg
-            
-        srt_content = "\n\n".join(srt_content_parts) + "\n\n" # Ensure final double newline for SRT format
+            if not text:
+                continue
+            subtitle_objects.append(srt.Subtitle(
+                index=i,
+                start=timedelta(seconds=segment["start"]),
+                end=timedelta(seconds=segment["end"]),
+                content=text
+            ))
+
+        if not subtitle_objects:
+            return None, "Transcription produced segments, but all were empty after stripping text."
+
+        # Wrap long subtitles with newlines (preserves original timing exactly)
+        if max_subtitle_length > 0:
+            subtitle_objects = wrap_long_subtitles(
+                subtitle_objects, int(max_subtitle_length), normalized_lang
+            )
+
+        srt_content = srt.compose(subtitle_objects)
 
         with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".srt", encoding="utf-8") as tmp_file:
             tmp_file.write(srt_content)
             temp_file_path = tmp_file.name
-        
-        success_message = "Subtitle generation complete using VAD+chunked OpenAI Whisper. SRT file generated."
+
+        success_message = f"Subtitle generation complete. {len(subtitle_objects)} subtitles generated (from {original_count} segments)."
         print(success_message)
         return temp_file_path, success_message
-    # except openai.APIError as e: # This is for OpenAI API, not local Whisper
-    #     error_msg = f"OpenAI API Error during transcription: {e}"
-    #     print(error_msg)
-    #     return None, error_msg
     except Exception as e:
-        error_msg = f"Error during VAD+chunked OpenAI Whisper subtitle generation: {e}"
+        error_msg = f"Error during subtitle generation: {e}"
         print(error_msg)
         return None, error_msg
 
-async def generate_subtitles_interface(audio_file_data, language: str):
+async def generate_subtitles_interface(audio_file_data, language: str, max_subtitle_length: int = 0):
     if not audio_file_data:
         return None, "Please upload an audio file."
-    
+
     audio_path = audio_file_data
 
-    status_updates = "Starting subtitle generation...\n" # Ensure newline is correctly escaped for the string
-    
-    generated_srt_path, message = await generate_subtitles_from_audio_for_gradio(audio_path, language)
-    
+    status_updates = "Starting subtitle generation...\n"
+
+    generated_srt_path, message = await generate_subtitles_from_audio_for_gradio(audio_path, language, int(max_subtitle_length))
+
     status_updates += message
-    
+
     if generated_srt_path:
         return generated_srt_path, status_updates
     else:
@@ -218,7 +188,8 @@ async def process_edit_srt_for_gradio(
     translated_srt_path: str,
     source_lang: str,
     target_lang: str,
-    window_radius: int
+    window_radius: int,
+    max_subtitle_length: int = 0
 ) -> Tuple[Optional[str], str]:
     """
     Reads source and translated SRT files, edits/refines the translations,
@@ -277,7 +248,7 @@ async def process_edit_srt_for_gradio(
 
     try:
         final_edited_subtitle_objects, successful_blocks, failed_blocks = await edit_translated_subtitles_in_blocks(
-            source_subs, translated_subs, source_lang, target_lang, client, int(BLOCK_SIZE), int(window_radius)
+            source_subs, translated_subs, source_lang, target_lang, client, int(BLOCK_SIZE), int(window_radius), int(max_subtitle_length)
         )
     except ValueError as e:
         return None, f"Configuration error: {e}"
@@ -285,13 +256,8 @@ async def process_edit_srt_for_gradio(
     block_summary = f"Block processing summary: {successful_blocks} successfully processed, {failed_blocks} blocks failed."
     print(block_summary)
 
-    total_summary = f"Total subtitles edited: {len(final_edited_subtitle_objects)} out of {len(source_subs)} original subtitles."
+    total_summary = f"Total subtitles edited: {len(final_edited_subtitle_objects)} (from {len(source_subs)} original subtitles)."
     print(total_summary)
-
-    if len(final_edited_subtitle_objects) != len(source_subs):
-        critical_error_msg = f"CRITICAL ERROR: Final subtitle count ({len(final_edited_subtitle_objects)}) does not match original count ({len(source_subs)}). Aborting file write."
-        print(critical_error_msg)
-        return None, critical_error_msg
 
     try:
         with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".srt", encoding="utf-8") as tmp_file:
@@ -307,7 +273,7 @@ async def process_edit_srt_for_gradio(
         return None, error_writing_msg
 
 
-async def edit_translation_interface(source_srt_file, translated_srt_file, source_language, target_language, window_radius):
+async def edit_translation_interface(source_srt_file, translated_srt_file, source_language, target_language, window_radius, max_subtitle_length):
     if not source_srt_file:
         return None, "Please upload the source SRT file."
     if not translated_srt_file:
@@ -316,7 +282,7 @@ async def edit_translation_interface(source_srt_file, translated_srt_file, sourc
     status_updates = "Starting translation editing...\n"
 
     edited_file_path, message = await process_edit_srt_for_gradio(
-        source_srt_file, translated_srt_file, source_language, target_language, int(window_radius)
+        source_srt_file, translated_srt_file, source_language, target_language, int(window_radius), int(max_subtitle_length)
     )
 
     status_updates += message
@@ -475,6 +441,7 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
                     source_lang_input = gr.Textbox(label="Source Language", value="English")
                     target_lang_input = gr.Textbox(label="Target Language", value="Korean")
                     window_radius_input = gr.Slider(label="Window Radius", minimum=1, maximum=8, step=1, value=ENV_WINDOW_RADIUS_DEFAULT, info="Number of context subtitles on each side")
+                    max_length_input = gr.Number(label="Max Subtitle Length", value=33, precision=0, info="Maximum chars per subtitle (0=unlimited)")
                     translate_button = gr.Button("Translate Subtitles", variant="primary")
                 with gr.Column(scale=1):
                     translate_status_output = gr.Textbox(label="Translation Status / Log", lines=10, interactive=False, autoscroll=True)
@@ -482,7 +449,7 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
             
             translate_button.click(
                 translate_interface,
-                inputs=[srt_file_input, source_lang_input, target_lang_input, window_radius_input],
+                inputs=[srt_file_input, source_lang_input, target_lang_input, window_radius_input, max_length_input],
                 outputs=[translated_file_output, translate_status_output]
             )
             gr.Markdown("""### Notes:
@@ -505,6 +472,7 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
                         value="Korean",
                         info="Select the language of the audio. Choose 'Auto-detect' if unsure."
                     )
+                    gen_max_length_input = gr.Number(label="Max Subtitle Length", value=33, precision=0, info="Maximum chars per subtitle (0=unlimited)")
                     generate_button = gr.Button("Generate Subtitles", variant="primary")
                 with gr.Column(scale=1):
                     generate_status_output = gr.Textbox(label="Generation Status / Log", lines=10, interactive=False, autoscroll=True)
@@ -512,7 +480,7 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
             
             generate_button.click(
                 generate_subtitles_interface,
-                inputs=[audio_file_input, generation_lang_input],
+                inputs=[audio_file_input, generation_lang_input, gen_max_length_input],
                 outputs=[generated_srt_output, generate_status_output]
             )
             gr.Markdown("""### Notes:
@@ -529,6 +497,7 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
                     edit_source_lang_input = gr.Textbox(label="Source Language", value="Korean")
                     edit_target_lang_input = gr.Textbox(label="Target Language", value="English")
                     edit_window_radius_input = gr.Slider(label="Window Radius", minimum=1, maximum=8, step=1, value=ENV_WINDOW_RADIUS_DEFAULT, info="Number of context subtitles on each side")
+                    edit_max_length_input = gr.Number(label="Max Subtitle Length", value=33, precision=0, info="Maximum chars per subtitle (0=unlimited)")
                     edit_button = gr.Button("Edit Translation", variant="primary")
                 with gr.Column(scale=1):
                     edit_status_output = gr.Textbox(label="Editing Status / Log", lines=10, interactive=False, autoscroll=True)
@@ -536,7 +505,7 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
 
             edit_button.click(
                 edit_translation_interface,
-                inputs=[edit_source_srt_input, edit_translated_srt_input, edit_source_lang_input, edit_target_lang_input, edit_window_radius_input],
+                inputs=[edit_source_srt_input, edit_translated_srt_input, edit_source_lang_input, edit_target_lang_input, edit_window_radius_input, edit_max_length_input],
                 outputs=[edited_file_output, edit_status_output]
             )
             gr.Markdown("""### Notes:

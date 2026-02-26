@@ -15,7 +15,7 @@ class VadConfig:
     startSpeechAfterMs: int = 90
     endSilenceAfterMs: int = 500
     prefixPaddingMs: int = 300
-    maxUtteranceMs: int = 12000
+    maxUtteranceMs: int = 30000
     minUtteranceMs: int = 100
 
 
@@ -213,11 +213,12 @@ def build_utterances(
     start_after_frames = max(1, int(math.ceil(cfg.startSpeechAfterMs / frame_ms)))
     end_after_frames = max(1, int(math.ceil(cfg.endSilenceAfterMs / frame_ms)))
 
-    utterances: List[Tuple[int, int]] = []
+    utterances: List[Tuple[int, int, int]] = []  # (start_frame, end_frame, speech_start_frame)
     in_speech = False
     speech_count = 0
     silence_count = 0
     start_frame = 0
+    speech_start_frame = 0
 
     for i, p in enumerate(probs):
         is_speech = p >= cfg.speechProbabilityThreshold
@@ -228,27 +229,29 @@ def build_utterances(
                 in_speech = True
                 # start with prefix padding (in frames)
                 prefix_frames = int(cfg.prefixPaddingMs / frame_ms)
-                start_frame = max(0, i - speech_count + 1 - prefix_frames)
+                speech_start_frame = i - speech_count + 1
+                start_frame = max(0, speech_start_frame - prefix_frames)
         else:
             silence_count += 1
             speech_count = 0
             if in_speech and silence_count >= end_after_frames:
                 end_frame = i  # current frame marks end of speech region
-                utterances.append((start_frame, end_frame))
+                utterances.append((start_frame, end_frame, speech_start_frame))
                 in_speech = False
 
     # Tail case: if we ended in speech
     if in_speech:
-        utterances.append((start_frame, len(probs)))
+        utterances.append((start_frame, len(probs), speech_start_frame))
 
     # Convert to ms and apply min/max constraints with additional splitting/merging
     def frames_to_ms(fr: int) -> int:
         return fr * frame_ms
 
     processed: List[Dict[str, int]] = []
-    for (sf, ef) in utterances:
+    for (sf, ef, ssf) in utterances:
         start_ms = frames_to_ms(sf)
         end_ms = frames_to_ms(ef)
+        speech_start_ms = frames_to_ms(ssf)
         if end_ms <= start_ms:
             continue
         duration_ms = end_ms - start_ms
@@ -260,10 +263,12 @@ def build_utterances(
                 sub_start = int(start_ms + k * step)
                 sub_end = int(min(end_ms, start_ms + (k + 1) * step))
                 if sub_end - sub_start >= cfg.minUtteranceMs:
-                    processed.append({"start_ms": sub_start, "end_ms": sub_end})
+                    # Only the first sub-segment has prefix padding; others start at speech
+                    sub_speech_start = speech_start_ms if k == 0 else sub_start
+                    processed.append({"start_ms": sub_start, "end_ms": sub_end, "speech_start_ms": sub_speech_start})
         else:
             if duration_ms >= cfg.minUtteranceMs:
-                processed.append({"start_ms": start_ms, "end_ms": end_ms})
+                processed.append({"start_ms": start_ms, "end_ms": end_ms, "speech_start_ms": speech_start_ms})
 
     # Optional: merge too-short segments into neighbors
     merged: List[Dict[str, int]] = []
@@ -276,6 +281,7 @@ def build_utterances(
         gap = seg["start_ms"] - prev["end_ms"]
         if gap <= cfg.frameMs and (seg["end_ms"] - seg["start_ms"]) < cfg.minUtteranceMs * 2:
             prev["end_ms"] = seg["end_ms"]
+            # speech_start_ms of first segment is preserved (already in prev)
         else:
             merged.append(seg)
 

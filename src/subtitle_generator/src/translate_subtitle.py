@@ -6,6 +6,7 @@ import asyncio
 import re # Added import
 from pathlib import Path
 from dotenv import load_dotenv
+from .subtitle_utils import wrap_long_subtitles
 
 load_dotenv()
 
@@ -368,7 +369,7 @@ async def translate_compacted_block(api_input_string: str, expected_items: int, 
         print(f"Error during compacted translation block... Error: {e}")
         return [""] * expected_items
 
-async def translate_subtitle_objects_in_blocks(original_subs: list[srt.Subtitle], source_lang: str, target_lang: str, client: openai.AsyncOpenAI, block_processing_size: int, window_radius: int) -> tuple[list[srt.Subtitle], int, int]:
+async def translate_subtitle_objects_in_blocks(original_subs: list[srt.Subtitle], source_lang: str, target_lang: str, client: openai.AsyncOpenAI, block_processing_size: int, window_radius: int, max_subtitle_length: int = 0) -> tuple[list[srt.Subtitle], int, int]:
     """
     Processes a list of srt.Subtitle objects in blocks, translates them, and returns the results.
     """
@@ -451,6 +452,11 @@ async def translate_subtitle_objects_in_blocks(original_subs: list[srt.Subtitle]
         final_translated_subtitle_objects.extend(original_subs)
         failed_blocks = len(original_subs) // block_processing_size + (1 if len(original_subs) % block_processing_size > 0 else 0) if block_processing_size > 0 else 0
 
+    # Wrap long subtitles with newlines (preserves 1:1 count and timing)
+    if max_subtitle_length > 0:
+        final_translated_subtitle_objects = wrap_long_subtitles(
+            final_translated_subtitle_objects, max_subtitle_length, target_lang
+        )
 
     return final_translated_subtitle_objects, successful_blocks, failed_blocks
 
@@ -462,7 +468,8 @@ async def edit_translated_subtitles_in_blocks(
     target_lang: str,
     client: openai.AsyncOpenAI,
     block_processing_size: int,
-    window_radius: int
+    window_radius: int,
+    max_subtitle_length: int = 0
 ) -> tuple[list[srt.Subtitle], int, int]:
     """
     Processes source and translated subtitle pairs in blocks, edits/refines the translations,
@@ -535,6 +542,12 @@ async def edit_translated_subtitles_in_blocks(
         print("Warning: Subtitles present but no edit tasks generated. Using original translations.")
         final_edited_subtitle_objects.extend(translated_subs)
         failed_blocks = len(source_subs) // block_processing_size + (1 if len(source_subs) % block_processing_size > 0 else 0) if block_processing_size > 0 else 0
+
+    # Wrap long subtitles with newlines (preserves 1:1 count and timing)
+    if max_subtitle_length > 0:
+        final_edited_subtitle_objects = wrap_long_subtitles(
+            final_edited_subtitle_objects, max_subtitle_length, target_lang
+        )
 
     return final_edited_subtitle_objects, successful_blocks, failed_blocks
 
