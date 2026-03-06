@@ -1,0 +1,72 @@
+---
+networks:
+  ingress:
+    name: ingress
+    external: true
+
+volumes:
+  openclaw-config:
+    driver: local
+    driver_opts:
+      type: none
+      device: ${HOME}/docker_volumes/openclaw/config
+      o: bind
+  openclaw-workspace:
+    driver: local
+    driver_opts:
+      type: none
+      device: ${HOME}/docker_volumes/openclaw/workspace
+      o: bind
+
+services:
+  openclaw-gateway:
+    image: alpine/openclaw:2026.3.2
+    container_name: openclaw-gateway
+    user: root
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.openclaw.entrypoints=websecure
+      - traefik.http.routers.openclaw.rule=Host(`openclaw.${DOMAIN}`)
+      - traefik.http.services.openclaw.loadbalancer.server.port=18789
+    environment:
+      HOME: /home/node
+      TERM: xterm-256color
+      OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN}
+      PATH: /home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:/root/.bun/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+    volumes:
+      - openclaw-config:/home/node/.openclaw
+      - openclaw-workspace:/home/node/.openclaw/workspace
+    networks:
+      - ingress
+    init: true
+    restart: unless-stopped
+    command:
+      - "node"
+      - "dist/index.js"
+      - "gateway"
+      - "--bind"
+      - "lan"
+      - "--port"
+      - "18789"
+
+  openclaw-cli:
+    image: alpine/openclaw:2026.3.2
+    container_name: openclaw-cli
+    user: root
+    labels:
+      - traefik.enable=false
+    environment:
+      HOME: /home/node
+      TERM: xterm-256color
+      BROWSER: echo
+    volumes:
+      - openclaw-config:/home/node/.openclaw
+      - openclaw-workspace:/home/node/.openclaw/workspace
+    networks:
+      - ingress
+    stdin_open: true
+    tty: true
+    init: true
+    entrypoint: ["node", "dist/index.js"]
+    profiles:
+      - cli
