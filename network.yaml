@@ -69,22 +69,22 @@ services:
       - ingress
     restart: always
 
-  cloudflare-companion:
-    image: tiredofit/traefik-cloudflare-companion
-    container_name: cloudflare-companion
-    environment:
-      - CF_EMAIL=${EMAIL}
-      - CF_TOKEN=${CF_TOKEN}
-      - TARGET_DOMAIN=${DOMAIN}
-      - DOMAIN1=${DOMAIN}
-      - DOMAIN1_PROXIED=true
-      - DOMAIN1_ZONE_ID=${DOMAIN_ZONE_ID}
-      - TIMEZONE=${TIMEZONE}
-    networks:
-      - ingress
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-    restart: always
+  # cloudflare-companion:
+  #   image: tiredofit/traefik-cloudflare-companion
+  #   container_name: cloudflare-companion
+  #   environment:
+  #     - CF_EMAIL=${EMAIL}
+  #     - CF_TOKEN=${CF_TOKEN}
+  #     - TARGET_DOMAIN=${DOMAIN}
+  #     - DOMAIN1=${DOMAIN}
+  #     - DOMAIN1_PROXIED=true
+  #     - DOMAIN1_ZONE_ID=${DOMAIN_ZONE_ID}
+  #     - TIMEZONE=${TIMEZONE}
+  #   networks:
+  #     - ingress
+  #   volumes:
+  #     - /var/run/docker.sock:/var/run/docker.sock
+  #   restart: always
 
   cloudflare-ddns:
     # Choose the appropriate tag based on your need:
