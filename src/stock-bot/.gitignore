@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+
+# 시크릿·상태는 절대 커밋하지 않는다.
+# 지금은 저장소 밖(/workspace/stock-data*)에 있지만, 설정 파일을 저장소 안으로
+# 옮기게 되면 같은 디렉터리에 딸려 들어올 수 있으므로 미리 막아둔다.
+kis.json
+kis_token.json
+*.db
+*.db-journal
+*.db-wal
+account_ledger.db
